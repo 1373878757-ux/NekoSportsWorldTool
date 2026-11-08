@@ -83,12 +83,20 @@ try {
         if ($relative -notmatch '^(NekoSportsWorldTool\.exe|LICENSE|README-Windows\.md|BUILD-INFO\.txt|SHA256SUMS\.txt|THIRD-PARTY-NOTICES\.txt|licenses/.+)$') { throw "Unexpected packaged file: $relative" }
         if ($relative -match '(?i)(session\.json|config\.json|identity\.json|\.pdb$|\.log$|\.exe\.(new|old)$)') { throw "Runtime/private data in package: $relative" }
     }
-    & (Join-Path $PSScriptRoot "smoke_windows.ps1") -Binary (Join-Path $verifiedRoot "NekoSportsWorldTool.exe")
+    $smokeResult = @(& (Join-Path $PSScriptRoot "smoke_windows.ps1") -Binary (Join-Path $verifiedRoot "NekoSportsWorldTool.exe") -AllowMissingOpenGLContext)
+    $guiSmokeStatus = if ($smokeResult -contains "NSWT_GUI_SMOKE=passed") {
+        "passed"
+    } elseif ($smokeResult -contains "NSWT_GUI_SMOKE=unavailable_missing_opengl_2_context") {
+        "unavailable_missing_opengl_2_context"
+    } else {
+        throw "Packaged executable smoke returned no recognized GUI status"
+    }
     $evidence = [ordered]@{
         version = $version; commit = $commit; target = "x86_64-pc-windows-msvc";
         productName = $info.ProductName; comments = $info.Comments;
         signature = $signatureStatus; systemImports = $dlls;
         zipSHA256 = $zipHash; fileCount = $actualFiles.Count;
+        guiSmoke = $guiSmokeStatus;
         windows10And11PhysicalAcceptance = "pending"
     }
     [IO.File]::WriteAllText((Join-Path $output "windows-build-evidence.json"), ($evidence | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))

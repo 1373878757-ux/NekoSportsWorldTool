@@ -1,4 +1,7 @@
-param([Parameter(Mandatory = $true)][string]$Binary)
+param(
+    [Parameter(Mandatory = $true)][string]$Binary,
+    [switch]$AllowMissingOpenGLContext
+)
 $ErrorActionPreference = "Stop"
 $exe = [IO.Path]::GetFullPath($Binary)
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ("nswt-smoke-" + [guid]::NewGuid().ToString("N"))
@@ -6,6 +9,7 @@ New-Item -ItemType Directory -Path $temporary | Out-Null
 $oldOffline = $env:NSWT_OFFLINE
 $oldData = $env:NSWT_DATA_DIR
 $process = $null
+$guiSmokeStatus = "passed"
 function Read-SharedText([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return "" }
     $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
@@ -37,9 +41,18 @@ try {
             $process.Refresh()
             $diagnostic = Read-SharedText $guiStderr
             if ($diagnostic.Contains("NSWT_GUI_INITIALIZATION=error")) { throw "GUI initialization reported an error: $diagnostic" }
-            if ($process.HasExited) { throw "GUI exited before ready (code $($process.ExitCode)): $diagnostic" }
+            if ($process.HasExited) {
+                if ($AllowMissingOpenGLContext -and $process.ExitCode -eq 1 -and
+                    $diagnostic.Contains("egui_glow: OpenGL: egui_glow requires opengl 2.0+.")) {
+                    $guiSmokeStatus = "unavailable_missing_opengl_2_context"
+                    $process = $null
+                    break
+                }
+                throw "GUI exited before ready (code $($process.ExitCode)): $diagnostic"
+            }
             $ready = $diagnostic.Contains("NSWT_GUI_INITIALIZATION=ready")
         } until (($ready -and $process.MainWindowHandle -ne [IntPtr]::Zero) -or [DateTime]::UtcNow -ge $deadline)
+        if ($guiSmokeStatus -ne "passed") { break }
         if (-not $ready -or $process.MainWindowHandle -eq [IntPtr]::Zero) { throw "GUI was not ready within 15 seconds: $diagnostic" }
         $process.Refresh()
         if (-not $process.Responding) { throw "GUI did not stay responsive" }
@@ -48,7 +61,13 @@ try {
         if ($process.ExitCode -ne 0) { throw "GUI exit code was $($process.ExitCode)" }
         $process = $null
     }
-    Write-Host "Offline packaged-executable CLI/GUI smoke passed; visual/DPI acceptance remains pending."
+    if ($guiSmokeStatus -eq "passed") {
+        Write-Output "NSWT_GUI_SMOKE=passed"
+        Write-Host "Offline packaged-executable CLI/GUI smoke passed; visual/DPI acceptance remains pending."
+    } else {
+        Write-Output "NSWT_GUI_SMOKE=unavailable_missing_opengl_2_context"
+        Write-Warning "The hosted runner has no OpenGL 2.0 context; GUI smoke could not run. Windows desktop acceptance remains pending."
+    }
 } finally {
     if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
     $env:NSWT_OFFLINE = $oldOffline
