@@ -30,16 +30,27 @@ fn free_console() {
     }
 }
 
-#[cfg(not(all(windows, feature = "gui")))]
+#[cfg(all(feature = "gui", not(windows)))]
 fn free_console() {}
 
 #[cfg(feature = "gui")]
 fn run_gui() {
     free_console();
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([880.0, 720.0])
+        .with_title(nekosportsworldtool::presentation::APP_NAME);
+    if let Ok(image) =
+        image::load_from_memory(include_bytes!("../assets/branding/sports-route.png"))
+    {
+        let image = image.into_rgba8();
+        viewport = viewport.with_icon(eframe::egui::IconData {
+            width: image.width(),
+            height: image.height(),
+            rgba: image.into_raw(),
+        });
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([880.0, 720.0])
-            .with_title("NekoSportsWorldTool"),
+        viewport,
         ..Default::default()
     };
     let result = nekosportsworldtool::run_gui(options);

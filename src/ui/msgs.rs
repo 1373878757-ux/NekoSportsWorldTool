@@ -154,7 +154,8 @@ impl App {
                     // Filter before coalescing messages: a late reply must not
                     // discard the current record's reply in the same frame.
                     if raw.get("rrid").and_then(|v| v.as_i64()) == self.records_page.detail_rrid
-                        && self.records_page.detail_rrid.is_some() {
+                        && self.records_page.detail_rrid.is_some()
+                    {
                         detail_raw = Some(raw);
                     }
                 }
@@ -485,7 +486,12 @@ impl App {
                     }
                 } else {
                     self.update.up_to_date = true;
-                    self.status = "已是最新版本".into();
+                    self.status = if cfg!(target_os = "android") {
+                        "已是最新版本"
+                    } else {
+                        "暂无可用定制版更新"
+                    }
+                    .into();
                 }
             } else {
                 let msg = val

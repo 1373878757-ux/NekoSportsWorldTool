@@ -101,6 +101,7 @@ fn parse(bytes: &[u8]) -> Result<RoadGraph, String> {
 }
 
 fn download(query: &str) -> Result<Vec<u8>, String> {
+    crate::runtime::ensure_network_allowed()?;
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(45))
         .build();

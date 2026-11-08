@@ -1,5 +1,5 @@
 //! 命令行入口：子命令分发 + 共享助手。
-//! 子命令实现见 ；数据文件与 GUI 共用（exe 同目录）。
+//! 子命令实现见 cmds；数据文件与 GUI 共用用户应用数据目录。
 //!
 //! 青龙定时任务：首次 `login --user .. --pass .. --remember`，之后定时 `run`
 //! 即可（会话失效且已记住凭据时自动重登）。
@@ -11,12 +11,55 @@ use crate::api::model::{self, Session};
 use crate::api::records::RecordRow;
 
 pub fn main(args: Vec<String>) -> i32 {
+    let command = args.first().map(String::as_str).unwrap_or("help");
+    if matches!(command, "--version" | "-V" | "version") {
+        println!(
+            "{} {} ({}; {})",
+            crate::presentation::APP_NAME,
+            crate::presentation::VERSION,
+            crate::presentation::BUILD_COMMIT,
+            crate::presentation::BUILD_TARGET
+        );
+        return 0;
+    }
+    let online_command = matches!(
+        command,
+        "login"
+            | "logout"
+            | "run"
+            | "ai"
+            | "ai-list"
+            | "records"
+            | "records-raw"
+            | "record-info"
+            | "obs-get"
+            | "ai-records"
+            | "ai-info"
+            | "semester"
+            | "cheat"
+            | "rank"
+            | "update"
+    );
+    if online_command {
+        if let Err(message) = crate::runtime::ensure_network_allowed() {
+            eprintln!("{message}");
+            return 1;
+        }
+    }
+    if (online_command && command != "update") || command == "obs-sample" {
+        if let Err(message) = crate::startup_data::initialize() {
+            eprintln!("本地初始化失败：{message}");
+            return 1;
+        }
+    }
     cmds::dispatch(args)
 }
 
 fn usage() {
     println!(
-        r#"NekoSportsWorldTool CLI（full 构建无参数启动 GUI）
+        r#"{app_name} CLI（full 构建无参数启动 GUI）
+
+  --version                                显示本地版本与构建信息，不打开 GUI
 
   login   --user <手机号> --pass <密码> [--remember]
                                            登录并保存会话；--remember 同时保存凭据供自动重登
@@ -36,9 +79,10 @@ fn usage() {
   rank   indoor --range 1|2|3 [--gender 0|1]
                                            室内榜（1日 2周 3月）
   rank   history --sort 1|2 [--gender 0|1] 历史榜
-  update [--check]                        检查更新；默认下载并自替换（--check 仅检查）
+  update [--check] [--yes]                检查定制版更新；--check 只检查，--yes 明确同意下载并替换
 
-当天榜单通常在有效里程产生后才有数据；run 默认随机 1.0~1.5 km / 6~8 分配速 / 30-300 分钟前。"#
+当天榜单通常在有效里程产生后才有数据；run 默认随机 1.0~1.5 km / 6~8 分配速 / 30-300 分钟前。"#,
+        app_name = crate::presentation::APP_NAME
     );
 }
 

@@ -3,7 +3,7 @@
 //! 后台任务与消息处理在独立 impl App 块中。
 //!
 //! 线程模型：所有网络/长任务 spawn thread + mpsc channel<String> 回 UI，
-//! 带 200ms 轮询重绘。带内消息协议：
+//! 消息发送触发重绘，任务运行时使用 200ms 轮询兜底；空闲时不持续重绘。带内消息协议：
 //! __IP_DONE__ / __LOGIN_DONE__ / __RUN_DONE__ / __AI_DONE__ / __RECORDS__ / __AI_LIST__
 //! __SEMESTER__ / __CHEAT__ / __RANK__ / __USER__ / __AI_RECORDS__
 
@@ -22,10 +22,14 @@ mod preview_jobs;
 pub mod records;
 mod road_tools;
 pub mod run;
+#[cfg(not(target_os = "android"))]
+pub mod startup;
 pub mod theme;
 pub mod user;
 
-use crate::api::model::{self, Config, HeaderIdentity, Session};
+#[cfg(test)]
+use crate::api::model;
+use crate::api::model::{Config, HeaderIdentity, Session};
 use eframe::egui;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
@@ -58,14 +62,17 @@ pub struct PopupInfo {
 #[derive(Clone)]
 pub struct JobSender {
     tx: Sender<String>,
+    ctx: egui::Context,
     auth: Option<crate::api::client::AuthContext>,
 }
 impl JobSender {
     pub fn send(&self, message: String) -> Result<(), std::sync::mpsc::SendError<String>> {
-        self.tx.send(match &self.auth {
+        let result = self.tx.send(match &self.auth {
             Some(context) => format!("__SESSION_JOB__{}|{message}", context.epoch),
             None => message,
-        })
+        });
+        self.ctx.request_repaint();
+        result
     }
     pub fn client(
         &self,
@@ -76,7 +83,30 @@ impl JobSender {
     }
 }
 
+/// Channel results wake the native event loop without idle polling.
+struct WakeSender<T> {
+    sender: Sender<T>,
+    ctx: egui::Context,
+}
+impl<T> Clone for WakeSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            ctx: self.ctx.clone(),
+        }
+    }
+}
+impl<T> WakeSender<T> {
+    fn send(&self, value: T) -> Result<(), std::sync::mpsc::SendError<T>> {
+        let result = self.sender.send(value);
+        self.ctx.request_repaint();
+        result
+    }
+}
+
 pub struct App {
+    ctx: egui::Context,
+    interactive: bool,
     #[cfg(test)]
     route_fixture: Option<(String, std::path::PathBuf)>,
     pub session_epoch: u64,
@@ -121,15 +151,14 @@ pub struct App {
     /// 已加载的 OSM 路网（真实道路路由 + 地图显示共用）。
     pub network: Option<Arc<route_planner::RoadGraph>>,
     pub osm_page: osm::OsmPage,
-    net_tx: Sender<osm::NetworkLoad>,
+    net_tx: WakeSender<osm::NetworkLoad>,
     net_rx: Receiver<osm::NetworkLoad>,
-    preview_tx: Sender<preview_jobs::PreviewResult>,
+    preview_tx: WakeSender<preview_jobs::PreviewResult>,
     preview_rx: Receiver<preview_jobs::PreviewResult>,
     run_control: Arc<crate::task_control::Control>,
 }
 
 impl eframe::App for App {
-    #[cfg(target_os = "android")]
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
         visuals.panel_fill.to_normalized_gamma_f32()
     }
@@ -143,7 +172,10 @@ impl eframe::App for App {
         #[cfg(target_os = "android")]
         self.poll_device_info();
         crate::platform::set_keep_screen_on(self.run_busy || self.ai_busy || self.login_busy);
-        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        // Progress/countdown tasks still get a bounded fallback; idle windows sleep.
+        if self.any_busy() || self.update.checking || self.update.downloading {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
 
         self.draw_shell(ctx);
 
@@ -179,7 +211,13 @@ impl App {
     fn draw_shell(&mut self, ctx: &egui::Context) {
         // ── 顶栏 ────────────────────────────────────────────────
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+            if !self.interactive {
+                ui.disable();
+            }
             ui.add_space(6.0);
+            if crate::runtime::offline() {
+                ui.colored_label(theme::text_dim(), crate::runtime::OFFLINE_MESSAGE);
+            }
             let compact = mobile::compact_ui(ui);
             let logged = self.session.is_some();
             let btn_text = if logged {
@@ -244,7 +282,11 @@ impl App {
                                 ui.horizontal_wrapped(|ui| {
                                     ui.checkbox(&mut self.remember, "记住密码");
                                     login_clicked = ui
-                                        .add_enabled(!self.login_busy, theme::primary_btn(btn_text))
+                                        .add_enabled(
+                                            !self.login_busy
+                                                && (logged || !crate::runtime::offline()),
+                                            theme::primary_btn(btn_text),
+                                        )
                                         .clicked();
                                 });
                             });
@@ -282,7 +324,10 @@ impl App {
                         );
                         ui.checkbox(&mut self.remember, "记住密码");
                         login_clicked = ui
-                            .add_enabled(!self.login_busy, theme::primary_btn(btn_text))
+                            .add_enabled(
+                                !self.login_busy && (logged || !crate::runtime::offline()),
+                                theme::primary_btn(btn_text),
+                            )
                             .clicked();
                         ui.end_row();
                     });
@@ -299,6 +344,9 @@ impl App {
 
         // ── 底部状态栏 ──────────────────────────────────────────
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            if !self.interactive {
+                ui.disable();
+            }
             if mobile::compact_ui(ui) {
                 ui.horizontal(|ui| {
                     ui.add(egui::Label::new(&self.status).truncate());
@@ -322,7 +370,8 @@ impl App {
                 ui.label(&self.status);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // 超链接但不用链接样式，纯文本观感
-                    ui.hyperlink_to(
+                    theme::external_link(
+                        ui,
                         egui::RichText::new("YanamiNeko").color(theme::text_dim()),
                         "https://github.com/YanamiNeko",
                     );
@@ -330,7 +379,8 @@ impl App {
                     ui.separator();
                     if ui
                         .add_enabled(
-                            !(self.update.checking || self.update.downloading),
+                            !crate::runtime::offline()
+                                && !(self.update.checking || self.update.downloading),
                             egui::Button::new(
                                 egui::RichText::new("检查更新")
                                     .small()
@@ -353,6 +403,9 @@ impl App {
 
         // ── 标签页 ──────────────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
+            if !self.interactive {
+                ui.disable();
+            }
             mobile::tab_bar(ui, &mut self.tab);
             ui.separator();
             match self.tab {
@@ -371,17 +424,28 @@ impl App {
 }
 
 impl App {
+    #[cfg(any(test, target_os = "android"))]
     fn from_state(
         ctx: &egui::Context,
         identity: HeaderIdentity,
         session: Session,
         config: Config,
     ) -> Self {
+        theme::apply(ctx);
+        let font_loaded = fonts::install(ctx);
+        Self::from_initialized_state(ctx, identity, session, config, font_loaded)
+    }
+
+    fn from_initialized_state(
+        ctx: &egui::Context,
+        identity: HeaderIdentity,
+        session: Session,
+        config: Config,
+        font_loaded: Option<String>,
+    ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let (net_tx, net_rx) = std::sync::mpsc::channel();
         let (preview_tx, preview_rx) = std::sync::mpsc::channel();
-        let font_loaded = fonts::install(ctx);
-        theme::apply(ctx);
         let device_buf = identity.clone();
         let username = config.username.clone();
         let password = config.password.clone();
@@ -389,6 +453,8 @@ impl App {
 
         let (auth_tx, auth_rx) = std::sync::mpsc::channel();
         Self {
+            ctx: ctx.clone(),
+            interactive: true,
             #[cfg(test)]
             route_fixture: None,
             session_epoch: 0,
@@ -458,53 +524,71 @@ impl App {
                 path: config.osm_path.clone(),
                 ..Default::default()
             },
-            net_tx,
+            net_tx: WakeSender {
+                sender: net_tx,
+                ctx: ctx.clone(),
+            },
             net_rx,
-            preview_tx,
+            preview_tx: WakeSender {
+                sender: preview_tx,
+                ctx: ctx.clone(),
+            },
             preview_rx,
             run_control: Arc::new(crate::task_control::Control::default()),
         }
     }
 
+    #[cfg(target_os = "android")]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self::from_state(
             &cc.egui_ctx,
-            model::load_identity(),
-            model::load_session(),
-            model::load_config(),
+            crate::api::model::load_identity(),
+            crate::api::model::load_session(),
+            crate::api::model::load_config(),
         );
-        if app.font_loaded.is_none() {
-            app.log
-                .push("未找到中文字体（msyh/simhei/simsun），界面中文可能显示为方块");
-        }
-        // 上次更新残留的 .old/.new 顺手清掉
-        crate::update::cleanup_residue();
-        // 启动检查更新（silent 静默 / ask 询问 / off 关闭）
-        match app.config.update_check.as_str() {
-            "off" => {}
-            "ask" => app.update.ask_startup = true,
-            _ => app.check_update(false),
-        }
-        app.fetch_ip();
-        #[cfg(target_os = "android")]
-        crate::android::request_device_info(true);
-        // AI 项目列表先上缓存，网络刷新后覆盖
-        app.ai_page.list = crate::api::model::load_ai_sports().unwrap_or_default();
-        if app.session.is_some() {
-            app.refresh_data_page();
-            app.refresh_records();
-            app.refresh_user_page();
-            app.refresh_ai_list();
-            if app.config.osm_path.is_empty() {
-                app.refresh_points();
+        app.start_background_services();
+        app
+    }
+
+    fn allow_network(&mut self) -> bool {
+        match crate::runtime::ensure_network_allowed() {
+            Ok(()) => true,
+            Err(error) => {
+                self.status = error;
+                false
             }
         }
-        // 已配置 OSM 路网则启动时后台加载
-        if !app.config.osm_path.is_empty() {
-            let path = app.config.osm_path.clone();
-            app.load_osm_async(path);
+    }
+
+    /// Called only after the main window has drawn on desktop.
+    fn start_background_services(&mut self) {
+        crate::update::cleanup_residue();
+        self.ai_page.list = crate::api::model::load_ai_sports().unwrap_or_default();
+        if crate::runtime::offline() {
+            self.ip = "离线".into();
+            self.status = crate::runtime::OFFLINE_MESSAGE.into();
+        } else {
+            match self.config.update_check.as_str() {
+                "off" => {}
+                "ask" => self.update.ask_startup = true,
+                _ => self.check_update(false),
+            }
+            self.fetch_ip();
+            if self.session.is_some() {
+                self.refresh_data_page();
+                self.refresh_records();
+                self.refresh_user_page();
+                self.refresh_ai_list();
+                if self.config.osm_path.is_empty() {
+                    self.refresh_points();
+                }
+            }
         }
-        app
+        #[cfg(target_os = "android")]
+        crate::android::request_device_info(true);
+        if !self.config.osm_path.is_empty() {
+            self.load_osm_async(self.config.osm_path.clone());
+        }
     }
 
     /// 后台任务（线程 + 日志 channel）。
@@ -514,6 +598,7 @@ impl App {
     {
         let tx = JobSender {
             tx: self.tx.clone(),
+            ctx: self.ctx.clone(),
             auth: None,
         };
         std::thread::spawn(move || f(tx));
@@ -525,6 +610,7 @@ impl App {
     {
         let tx = JobSender {
             tx: self.tx.clone(),
+            ctx: self.ctx.clone(),
             auth: Some(crate::api::client::AuthContext {
                 epoch: self.session_epoch,
                 rejected: self.auth_guard.clone(),

@@ -146,7 +146,7 @@ fn write_json<T: serde::Serialize>(name: &str, value: &T) -> Result<(), String> 
     let path = exe_dir().join(name);
     let json =
         serde_json::to_string_pretty(value).map_err(|e| format!("序列化 {name} 失败: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("写入 {} 失败: {e}", path.display()))
+    crate::startup_data::atomic_write(&path, json.as_bytes())
 }
 
 /// 加载设备身份；device_id / app_install_time 缺失时生成一次并立即落盘，

@@ -71,7 +71,10 @@ impl App {
                 "学校登录已失效，请重新登录；本地地图仍可查看。",
             );
             if ui
-                .add_enabled(!self.login_busy, theme::primary_btn("重新登录"))
+                .add_enabled(
+                    !crate::runtime::offline() && !self.login_busy,
+                    theme::primary_btn("重新登录"),
+                )
                 .clicked()
             {
                 self.do_login();
@@ -99,14 +102,19 @@ impl App {
         ui.label(format!("当前学校：{school}"));
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(!self.osm_page.busy, theme::primary_btn("自动获取学校路网"))
+                .add_enabled(
+                    !crate::runtime::offline() && !self.osm_page.busy,
+                    theme::primary_btn("自动获取学校路网"),
+                )
                 .clicked()
             {
                 self.use_school_roads(false);
             }
             if ui
                 .add_enabled(
-                    !self.osm_page.busy && self.config.osm_path.is_empty(),
+                    !crate::runtime::offline()
+                        && !self.osm_page.busy
+                        && self.config.osm_path.is_empty(),
                     egui::Button::new("重新下载路网"),
                 )
                 .clicked()
@@ -119,7 +127,8 @@ impl App {
                 "当前：手动文件"
             });
         });
-        ui.hyperlink_to(
+        theme::external_link(
+            ui,
             "路网数据 © OpenStreetMap contributors",
             "https://www.openstreetmap.org/copyright",
         );
@@ -158,7 +167,14 @@ impl App {
                 self.osm_page.status =
                     "已取消接收结果；已发出的网络请求可能仍会运行到结束或超时".into();
             }
-            if !self.osm_page.busy && ui.button("重试获取路网").clicked() {
+            if !self.osm_page.busy
+                && ui
+                    .add_enabled(
+                        !crate::runtime::offline() || !self.config.osm_path.is_empty(),
+                        egui::Button::new("重试获取路网"),
+                    )
+                    .clicked()
+            {
                 if self.config.osm_path.is_empty() {
                     self.refresh_school_route(false);
                 } else {
@@ -200,13 +216,7 @@ impl App {
 
         ui.add_space(4.0);
         if self.network.is_some() {
-            super::map::legend(
-                ui,
-                &[
-                    ("道路", egui::Color32::from_rgb(190, 200, 196)),
-                    ("建筑", egui::Color32::from_rgb(214, 182, 158)),
-                ],
-            );
+            super::map::legend(ui, &[("道路", theme::road()), ("建筑", theme::building())]);
         }
         let rect = ui.available_rect_before_wrap();
         let (response, painter) = ui.allocate_painter(
@@ -267,11 +277,7 @@ impl App {
             }
         }
 
-        painter.rect_filled(
-            canvas,
-            egui::Rounding::ZERO,
-            egui::Color32::from_rgb(250, 252, 251),
-        );
+        painter.rect_filled(canvas, egui::Rounding::ZERO, theme::map_background());
         if let Some(net) = &self.network {
             self.osm_page.map.draw_network(&painter, canvas, net);
         } else {

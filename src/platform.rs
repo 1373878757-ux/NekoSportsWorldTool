@@ -9,20 +9,51 @@ pub enum InputKind {
 }
 
 pub fn data_dir() -> std::path::PathBuf {
+    try_data_dir().expect("application data directory must be validated before use")
+}
+
+/// Resolve the user's application data root without creating or modifying it.
+pub fn try_data_dir() -> Result<std::path::PathBuf, String> {
     #[cfg(test)]
     if let Some(path) = TEST_DATA_DIR.with(|p| p.borrow().clone()) {
-        return path;
+        return Ok(path);
+    }
+    if let Some(path) = std::env::var_os("NSWT_DATA_DIR") {
+        let path = std::path::PathBuf::from(path);
+        return if path.is_absolute() {
+            Ok(path)
+        } else {
+            Err("NSWT_DATA_DIR 必须是绝对路径".into())
+        };
     }
     #[cfg(target_os = "android")]
     {
-        crate::android::data_dir()
+        Ok(crate::android::data_dir())
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "macos")]
     {
-        std::env::current_exe()
+        let home = std::env::var_os("HOME").ok_or("无法确定用户主目录")?;
+        let home = std::path::PathBuf::from(home);
+        if !home.is_absolute() {
+            return Err("HOME 必须是绝对路径".into());
+        }
+        Ok(home.join("Library/Application Support/NekoSportsWorldTool-J-claude"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let local = std::env::var_os("LOCALAPPDATA").ok_or("无法确定 LOCALAPPDATA")?;
+        let path = std::path::PathBuf::from(local);
+        if !path.is_absolute() {
+            return Err("LOCALAPPDATA 必须是绝对路径".into());
+        }
+        Ok(path.join("NekoSportsWorldTool-J-claude"))
+    }
+    #[cfg(not(any(target_os = "android", target_os = "macos", target_os = "windows")))]
+    {
+        Ok(std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .ok_or("无法定位程序目录")?)
     }
 }
 
@@ -35,9 +66,14 @@ pub fn edit_text(id: u64, value: &str, kind: InputKind) {
 
 pub fn take_edited_text(id: u64) -> Option<String> {
     #[cfg(target_os = "android")]
-    { crate::android::take_edited_text(id) }
+    {
+        crate::android::take_edited_text(id)
+    }
     #[cfg(not(target_os = "android"))]
-    { let _ = id; None }
+    {
+        let _ = id;
+        None
+    }
 }
 
 pub fn set_keep_screen_on(enabled: bool) {
@@ -51,9 +87,13 @@ pub fn set_keep_screen_on(enabled: bool) {
 /// （形如 0.2.5-android.3，与 Release tag 对齐）。
 pub fn version_name() -> String {
     #[cfg(target_os = "android")]
-    { crate::android::version_name() }
+    {
+        crate::android::version_name()
+    }
     #[cfg(not(target_os = "android"))]
-    { env!("CARGO_PKG_VERSION").to_string() }
+    {
+        env!("CARGO_PKG_VERSION").to_string()
+    }
 }
 
 /// Android：把已下载的 APK 交给系统安装器（用户在系统弹窗确认安装）。
@@ -69,7 +109,9 @@ pub fn sync_clipboard(context: &egui::Context) {
     #[cfg(target_os = "android")]
     {
         let text = context.output(|output| output.copied_text.clone());
-        if !text.is_empty() { crate::android::copy_text(&text); }
+        if !text.is_empty() {
+            crate::android::copy_text(&text);
+        }
     }
     #[cfg(not(target_os = "android"))]
     let _ = context;

@@ -720,7 +720,6 @@ fn cmd_rank(rest: &[&str]) -> i32 {
 fn cmd_update(rest: &[&str]) -> i32 {
     let flags = parse_flags(rest);
     let check_only = get(&flags, "check").is_some();
-    crate::update::cleanup_residue();
     let mut log = logger();
     let release = match crate::update::check_latest(&mut log) {
         Ok(r) => r,
@@ -730,7 +729,7 @@ fn cmd_update(rest: &[&str]) -> i32 {
         }
     };
     let Some(rel) = release else {
-        println!("√ 已是最新版本（v{}）", crate::update::current_version());
+        println!("√ 未发现更高版本的兼容定制发行（当前 v{}）", crate::update::current_version());
         return 0;
     };
     println!(
@@ -755,6 +754,12 @@ fn cmd_update(rest: &[&str]) -> i32 {
     }
     #[cfg(not(target_os = "android"))]
     {
+        if get(&flags, "yes").is_none() {
+            println!("尚未确认：未下载、替换或重启程序。确认后请执行 update --yes；仅检查使用 update --check。");
+            return 2;
+        }
+        crate::update::cleanup_residue();
+        println!("已通过 --yes 确认从 {} 下载并替换程序。", rel.repo);
         println!("开始下载 {}…", rel.asset_name);
         let mut last_pct = u64::MAX;
         let bytes = match crate::update::download(&rel.asset_url, |done, total| {

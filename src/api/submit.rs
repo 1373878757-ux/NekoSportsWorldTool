@@ -78,6 +78,7 @@ pub fn submit_record(
     p: &SubmitParams,
     log: &mut dyn FnMut(&str),
 ) -> Result<SubmitResult, String> {
+    crate::runtime::ensure_network_allowed()?;
     client.ensure_session_valid()?;
     let session = client.login.as_ref().ok_or("未登录")?;
     if session.uid != p.uid || session.unid.parse::<i64>().ok() != Some(p.selected_unid) {
@@ -139,6 +140,7 @@ fn send_record(
     run_uuid: String,
     log: &mut dyn FnMut(&str),
 ) -> Result<SubmitResult, SubmitFailure> {
+    crate::runtime::ensure_network_allowed().map_err(SubmitFailure::Rejected)?;
     let track = &p.track;
     let start_coordinate = track.validate_consistency()?;
     if p.five_point_json.is_empty() {

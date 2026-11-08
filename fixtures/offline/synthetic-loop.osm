@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="NSWT offline synthetic fixture">
+  <node id="1" lat="1.000" lon="2.000"/>
+  <node id="2" lat="1.000" lon="2.002"/>
+  <node id="3" lat="1.002" lon="2.002"/>
+  <node id="4" lat="1.002" lon="2.000"/>
+  <node id="5" lat="1.0007" lon="2.0007"/>
+  <node id="6" lat="1.0007" lon="2.0013"/>
+  <node id="7" lat="1.0013" lon="2.0013"/>
+  <node id="8" lat="1.0013" lon="2.0007"/>
+  <way id="100">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="1"/>
+    <tag k="highway" v="footway"/>
+    <tag k="name" v="Synthetic offline loop"/>
+  </way>
+  <way id="101">
+    <nd ref="5"/><nd ref="6"/><nd ref="7"/><nd ref="8"/><nd ref="5"/>
+    <tag k="building" v="yes"/>
+  </way>
+</osm>

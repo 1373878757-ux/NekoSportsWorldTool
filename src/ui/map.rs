@@ -2,6 +2,7 @@
 //!
 //! 供「路网」页与「跑步」页复用，纯离线绘制折线/多边形/点。
 
+use super::theme;
 use eframe::egui;
 use egui::{Color32, Pos2, Rect, Stroke, Vec2};
 
@@ -188,7 +189,7 @@ impl MapState {
         rect: Rect,
         net: &route_planner::RoadGraph,
     ) {
-        let road_color = Color32::from_rgb(190, 200, 196);
+        let road_color = theme::road();
         let (min, max) = self.world_bounds(rect);
         let visible = net.visible_edges(min, max);
         let stride = if self.scale < 0.1 {
@@ -216,13 +217,7 @@ impl MapState {
         }
         for building in &net.buildings {
             let points: Vec<_> = building.iter().map(|c| (c.lat, c.lon)).collect();
-            self.draw_polygon(
-                painter,
-                rect,
-                &points,
-                Color32::from_rgb(214, 182, 158),
-                1.0,
-            );
+            self.draw_polygon(painter, rect, &points, theme::building(), 1.0);
         }
     }
 }

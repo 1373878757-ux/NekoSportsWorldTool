@@ -4,6 +4,10 @@
 //! 交给系统安装器（platform::install_apk）。
 
 use super::{theme, App};
+use crate::presentation::{
+    APP_NAME, BUILD_COMMIT, BUILD_TARGET, CUSTOMIZATION_NOTE, LICENSE_NAME, SIGNATURE,
+    SOURCE_REPOSITORY, TAGLINE, UPSTREAM_AUTHOR, UPSTREAM_REPOSITORY, VERSION,
+};
 use crate::update::ReleaseInfo;
 use eframe::egui;
 
@@ -36,22 +40,69 @@ pub enum FinishAction {
 
 impl App {
     pub fn draw_about(&mut self, ui: &mut egui::Ui) {
-        ui.heading("NekoSportsWorldTool");
+        egui::ScrollArea::vertical()
+            .id_salt("about_scroll")
+            .show(ui, |ui| self.draw_about_content(ui));
+    }
+
+    fn draw_about_content(&mut self, ui: &mut egui::Ui) {
+        ui.heading(APP_NAME);
+        ui.label(egui::RichText::new(TAGLINE).color(theme::text()));
+        ui.label(
+            egui::RichText::new(SIGNATURE)
+                .small()
+                .color(theme::text_dim()),
+        );
+        ui.add_space(10.0);
+        ui.label(CUSTOMIZATION_NOTE);
+        ui.label(format!("版本：{VERSION} · 构建：{BUILD_COMMIT}"));
+        ui.label(format!(
+            "平台：{} / {} · 目标：{BUILD_TARGET}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+        ui.label(format!("上游项目：{APP_NAME} · 作者：{UPSTREAM_AUTHOR}"));
+        theme::external_link(
+            ui,
+            "原始上游仓库",
+            format!("https://github.com/{UPSTREAM_REPOSITORY}"),
+        );
+        theme::external_link(
+            ui,
+            "本次修改所基于的源码仓库",
+            format!("https://github.com/{SOURCE_REPOSITORY}"),
+        );
+        ui.label(format!("项目许可证：{LICENSE_NAME}（仅非商业使用与分享）"));
+        theme::external_link(
+            ui,
+            "查看完整项目许可证",
+            format!("https://github.com/{SOURCE_REPOSITORY}/blob/main/LICENSE"),
+        );
+        ui.label("中文字体：Noto Sans SC · SIL Open Font License 1.1；许可证随发行包提供。");
+        if let Some(font) = &self.font_loaded {
+            ui.label(format!("当前中文字库：{font}"));
+        }
+        ui.label(format!(
+            "数据目录：{}",
+            crate::platform::data_dir().display()
+        ));
         ui.add_space(6.0);
         ui.label(format!("当前版本：v{}", crate::platform::version_name()));
         let repo = if cfg!(target_os = "android") {
             crate::update::REPO_FORK
         } else {
-            crate::update::REPO_UPSTREAM
+            crate::update::REPO_CUSTOM
         };
-        ui.hyperlink_to(
-            egui::RichText::new(format!("https://github.com/{repo}/releases")).color(theme::text_dim()),
+        theme::external_link(
+            ui,
+            egui::RichText::new(format!("https://github.com/{repo}/releases"))
+                .color(theme::text_dim()),
             format!("https://github.com/{repo}/releases"),
         );
         ui.add_space(4.0);
         ui.colored_label(
             theme::text_dim(),
-            "手动更新：下载对应平台的新程序文件；Windows 用户退出软件后，用新的 nekosportsworldtool.exe 替换旧文件。",
+            "手动更新：从定制版发布页下载对应平台的新文件。退出程序后替换应用，用户数据保存在上方目录。",
         );
         ui.colored_label(
             theme::text_dim(),
@@ -62,13 +113,26 @@ impl App {
         // ── 检查 / 版本信息 ────────────────────────────────────
         ui.horizontal(|ui| {
             let busy = self.update.checking || self.update.downloading;
-            if ui.add_enabled(!busy, theme::primary_btn("检查更新")).clicked() {
+            if ui
+                .add_enabled(
+                    !busy && !crate::runtime::offline(),
+                    theme::primary_btn("检查更新"),
+                )
+                .clicked()
+            {
                 self.check_update(true);
             }
             if self.update.checking {
                 ui.colored_label(theme::text_dim(), "检查中…");
             } else if self.update.up_to_date {
-                ui.colored_label(theme::ok(), "√ 已是最新版本");
+                ui.colored_label(
+                    theme::ok(),
+                    if cfg!(target_os = "android") {
+                        "√ 已是最新版本"
+                    } else {
+                        "暂无可用定制版更新"
+                    },
+                );
             }
         });
         if let Some(e) = &self.update.check_error {
@@ -101,7 +165,10 @@ impl App {
             if self.update.downloading {
                 self.draw_download_progress(ui);
             } else if self.update.finish.is_none() {
-                if ui.button("立即更新").clicked() {
+                if ui
+                    .add_enabled(!crate::runtime::offline(), egui::Button::new("立即更新"))
+                    .clicked()
+                {
                     if self.any_busy() {
                         self.status = "有任务进行中，请稍后再试".into();
                     } else {
@@ -132,9 +199,11 @@ impl App {
         // ── 启动检查模式 ───────────────────────────────────────
         ui.label("启动时检查更新：");
         ui.horizontal(|ui| {
-            for (m, label) in
-                [("silent", "静默检查（发现新版才提示）"), ("ask", "每次询问"), ("off", "关闭")]
-            {
+            for (m, label) in [
+                ("silent", "静默检查（发现新版才提示）"),
+                ("ask", "每次询问"),
+                ("off", "关闭"),
+            ] {
                 let selected = self.config.update_check == m;
                 if ui.radio(selected, label).clicked() {
                     self.config.update_check = m.to_string();
@@ -144,15 +213,11 @@ impl App {
                 }
             }
         });
-        ui.colored_label(
-            theme::text_dim(),
-            "协议变更时旧版本可能异常，建议保持开启",
-        );
+        ui.colored_label(theme::text_dim(), "协议变更时旧版本可能异常，建议保持开启");
     }
 
     fn draw_download_progress(&self, ui: &mut egui::Ui) {
-        let bar = egui::ProgressBar::new(self.update.fraction())
-            .text(self.update.progress_text());
+        let bar = egui::ProgressBar::new(self.update.fraction()).text(self.update.progress_text());
         ui.add(bar);
     }
 
@@ -170,7 +235,10 @@ impl App {
                     ui.label("是否检查新版本？\n协议变更时旧版本可能异常，建议检查。");
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.add(theme::primary_btn("检查")).clicked() {
+                        if ui
+                            .add_enabled(!crate::runtime::offline(), theme::primary_btn("检查"))
+                            .clicked()
+                        {
                             done = Some("check");
                         }
                         if ui.button("本次跳过").clicked() {
@@ -220,10 +288,20 @@ impl App {
                         }
                     }
                     ui.add_space(4.0);
-                    ui.colored_label(theme::warn(), "更新会替换为官方 Release 版本并重启程序");
+                    ui.colored_label(
+                        theme::warn(),
+                        if cfg!(target_os = "android") {
+                            "更新会替换为所选 Release 版本并重启程序"
+                        } else {
+                            "确认后才会下载定制版并替换当前程序；原用户数据目录保留。"
+                        },
+                    );
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.add(theme::primary_btn("立即更新")).clicked() {
+                        if ui
+                            .add_enabled(!crate::runtime::offline(), theme::primary_btn("立即更新"))
+                            .clicked()
+                        {
                             go = true;
                         }
                         if ui.button("忽略").clicked() {
@@ -253,7 +331,8 @@ impl App {
                 ),
                 FinishAction::InstallApk { tag } => (
                     format!("已下载 {tag}"),
-                    "点击安装，在系统弹窗中确认；若提示禁止安装，请允许本应用安装未知应用。".to_string(),
+                    "点击安装，在系统弹窗中确认；若提示禁止安装，请允许本应用安装未知应用。"
+                        .to_string(),
                     "安装".to_string(),
                 ),
             };
@@ -277,20 +356,18 @@ impl App {
                 });
             if done {
                 match self.update.finish.take() {
-                    Some(FinishAction::Restart { .. }) => {
-                        match crate::relaunch::relaunch_self() {
-                            Ok(()) => {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                            Err(e) => {
-                                self.status = e.clone();
-                                self.popup = Some(super::PopupInfo {
-                                    title: "更新完成".into(),
-                                    lines: vec![e],
-                                });
-                            }
+                    Some(FinishAction::Restart { .. }) => match crate::relaunch::relaunch_self() {
+                        Ok(()) => {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
-                    }
+                        Err(e) => {
+                            self.status = e.clone();
+                            self.popup = Some(super::PopupInfo {
+                                title: "更新完成".into(),
+                                lines: vec![e],
+                            });
+                        }
+                    },
                     Some(FinishAction::InstallApk { .. }) => {
                         crate::platform::install_apk(
                             &crate::platform::data_dir()

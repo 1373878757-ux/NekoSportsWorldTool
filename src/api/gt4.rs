@@ -152,6 +152,7 @@ pub fn solve_gt4(
     _client: &mut super::client::ApiClient,
     log: &mut dyn FnMut(&str),
 ) -> Result<Value, String> {
+    crate::runtime::ensure_network_allowed()?;
     let mut last_err = String::new();
     for attempt in 1..=3 {
         match solve_once(captcha_id, _client, log) {
@@ -171,6 +172,7 @@ fn solve_once(
     _client: &mut super::client::ApiClient,
     log: &mut dyn FnMut(&str),
 ) -> Result<Value, String> {
+    crate::runtime::ensure_network_allowed()?;
     let agent = make_agent();
     let challenge = uuid::Uuid::new_v4().to_string().replace('-', "");
     let callback = format!("geetest_{}", crate::crypto::envelope::now_ms());
@@ -230,6 +232,7 @@ fn solve_once(
 }
 
 fn download(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, String> {
+    crate::runtime::ensure_network_allowed()?;
     let resp = agent.get(url).set("User-Agent", UA_WEB).call().map_err(ureq_err)?;
     let mut buf = Vec::new();
     std::io::Read::read_to_end(&mut resp.into_reader(), &mut buf).map_err(|e| e.to_string())?;

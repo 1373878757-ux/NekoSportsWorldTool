@@ -475,7 +475,7 @@ impl App {
                 self.status = "已请求取消；等待当前请求/计算结束，取消后不会进入记录提交".into();
             }
         }
-        let enabled = !self.run_busy && self.session.is_some();
+        let enabled = !crate::runtime::offline() && !self.run_busy && self.session.is_some();
         let btn = if self.run_busy {
             theme::primary_btn("提交中…")
         } else {
@@ -533,7 +533,10 @@ impl App {
             return;
         }
         if ui
-            .add_enabled(!self.osm_page.busy, egui::Button::new("刷新路线点位与围栏"))
+            .add_enabled(
+                !crate::runtime::offline() && !self.osm_page.busy,
+                egui::Button::new("刷新路线点位与围栏"),
+            )
             .clicked()
         {
             self.refresh_points();
@@ -662,9 +665,9 @@ impl App {
             super::map::legend(
                 ui,
                 &[
-                    ("道路", egui::Color32::from_rgb(200, 208, 204)),
-                    ("建筑", egui::Color32::from_rgb(224, 194, 170)),
-                    ("路线", egui::Color32::from_rgb(30, 111, 216)),
+                    ("道路", theme::road()),
+                    ("建筑", theme::building()),
+                    ("路线", theme::route()),
                     ("打卡点", egui::Color32::from_rgb(240, 180, 0)),
                     ("起点", egui::Color32::from_rgb(22, 160, 90)),
                     ("终点", egui::Color32::from_rgb(220, 38, 38)),
@@ -679,11 +682,7 @@ impl App {
             egui::Sense::drag(),
         );
         let canvas = response.rect;
-        painter.rect_filled(
-            canvas,
-            egui::Rounding::ZERO,
-            egui::Color32::from_rgb(250, 252, 251),
-        );
+        painter.rect_filled(canvas, egui::Rounding::ZERO, theme::map_background());
 
         // 首次预览后适配视野：优先以电子围栏为中点/范围，无围栏时退化为路线+打卡点+道路
         if !self.run_page.map_fitted {
@@ -709,7 +708,7 @@ impl App {
         }
 
         if let Some(p) = &self.run_page.preview {
-            let road = egui::Color32::from_rgb(200, 208, 204);
+            let road = theme::road();
             for e in p.edges.iter().step_by(if self.run_page.map.scale < 0.1 {
                 (p.edges.len() / 4000).max(1)
             } else {
@@ -719,7 +718,7 @@ impl App {
                     .map
                     .draw_polyline(&painter, canvas, e, road, 1.0);
             }
-            let bld = egui::Color32::from_rgb(224, 194, 170);
+            let bld = theme::building();
             for b in &p.buildings {
                 self.run_page
                     .map
@@ -731,7 +730,7 @@ impl App {
                     .map
                     .draw_polygon(&painter, canvas, f, fence_c, 2.0);
             }
-            let route_c = egui::Color32::from_rgb(30, 111, 216);
+            let route_c = theme::route();
             self.run_page
                 .map
                 .draw_polyline(&painter, canvas, &p.route, route_c, 2.5);
@@ -805,7 +804,7 @@ impl App {
                 egui::Align2::LEFT_TOP,
                 label,
                 egui::FontId::proportional(12.0),
-                egui::Color32::from_rgb(88, 104, 99),
+                theme::text_dim(),
             );
         } else {
             painter.text(
@@ -862,13 +861,7 @@ impl App {
 
     fn draw_run_base_map(&mut self, ui: &mut egui::Ui, net: &route_planner::RoadGraph) {
         ui.label("基础地图：道路与建筑已加载，路线尚未生成。可拖拽和滚轮缩放。");
-        super::map::legend(
-            ui,
-            &[
-                ("道路", egui::Color32::from_rgb(190, 200, 196)),
-                ("建筑", egui::Color32::from_rgb(214, 182, 158)),
-            ],
-        );
+        super::map::legend(ui, &[("道路", theme::road()), ("建筑", theme::building())]);
         let (response, painter) = ui.allocate_painter(
             egui::vec2(ui.available_width().max(200.), 240.),
             egui::Sense::drag(),
@@ -885,17 +878,18 @@ impl App {
             self.run_page.base_map_request = Some(self.osm_page.request_id);
             self.run_page.map_fitted = false;
         }
-        painter.rect_filled(
-            canvas,
-            egui::Rounding::ZERO,
-            egui::Color32::from_rgb(250, 252, 251),
-        );
+        painter.rect_filled(canvas, egui::Rounding::ZERO, theme::map_background());
         self.run_page.map.draw_network(&painter, canvas, net);
         self.run_page.map.interact(ui, canvas);
     }
 
     fn start_run(&mut self) {
-        if self.run_busy { return; }
+        if !self.allow_network() {
+            return;
+        }
+        if self.run_busy {
+            return;
+        }
         if self.run_page.route_mode == RouteMode::Road && self.network.is_none() {
             self.status = "请先加载路网并刷新路线点位".into();
             return;

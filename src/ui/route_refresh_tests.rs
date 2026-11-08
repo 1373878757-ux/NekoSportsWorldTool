@@ -456,8 +456,8 @@ fn run_base_map_draws_real_roads_and_buildings_without_route_metadata() {
             let mut buildings = false;
             for _ in 0..60 {
                 let output = frame(&mut app, &ctx, w, h, vec![]);
-                roads |= visible_path(&output, egui::Color32::from_rgb(190, 200, 196));
-                buildings |= visible_path(&output, egui::Color32::from_rgb(214, 182, 158));
+                roads |= visible_path(&output, theme::road());
+                buildings |= visible_path(&output, theme::building());
                 if roads && buildings {
                     break;
                 }
@@ -505,7 +505,7 @@ fn run_base_map_can_pan_zoom_and_refit_a_reloaded_map() {
         .iter()
         .find_map(|shape| match &shape.shape {
             egui::Shape::Rect(rect)
-                if rect.fill == egui::Color32::from_rgb(250, 252, 251)
+                if rect.fill == theme::map_background()
                     && (rect.rect.height() - 240.).abs() < 0.1
                     && shape.clip_rect.contains(rect.rect.center()) =>
             {

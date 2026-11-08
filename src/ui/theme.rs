@@ -1,25 +1,44 @@
-//! 界面主题：浅色底 + 深青绿强调色的统一视觉。
+//! Shared dark palette for controls, presentation, and local map canvases.
 
 use eframe::egui;
 use egui::Color32;
 
-const BG: Color32 = Color32::from_rgb(245, 248, 247);
-const WIDGET: Color32 = Color32::from_rgb(255, 255, 255);
-const WIDGET_HOVER: Color32 = Color32::from_rgb(232, 241, 238);
-const BORDER: Color32 = Color32::from_rgb(206, 219, 214);
-const ACCENT: Color32 = Color32::from_rgb(13, 148, 136);
-const ACCENT_DIM: Color32 = Color32::from_rgb(9, 108, 99);
-const TEXT: Color32 = Color32::from_rgb(24, 33, 31);
-const TEXT_DIM: Color32 = Color32::from_rgb(88, 104, 99);
+const BG: Color32 = Color32::from_rgb(11, 13, 18);
+const WIDGET: Color32 = Color32::from_rgb(22, 26, 35);
+const WIDGET_HOVER: Color32 = Color32::from_rgb(35, 41, 55);
+const BORDER: Color32 = Color32::from_rgb(38, 42, 53);
+const ACCENT: Color32 = Color32::from_rgb(139, 158, 255);
+const ACCENT_DIM: Color32 = Color32::from_rgb(106, 126, 224);
+const TEXT: Color32 = Color32::from_rgb(245, 245, 247);
+const TEXT_DIM: Color32 = Color32::from_rgb(156, 163, 175);
+
+pub fn background() -> Color32 {
+    BG
+}
+pub fn border() -> Color32 {
+    BORDER
+}
+pub fn map_background() -> Color32 {
+    Color32::from_rgb(15, 19, 27)
+}
+pub fn road() -> Color32 {
+    Color32::from_rgb(100, 113, 131)
+}
+pub fn building() -> Color32 {
+    Color32::from_rgb(98, 82, 74)
+}
+pub fn route() -> Color32 {
+    ACCENT
+}
 
 pub fn ok() -> Color32 {
-    Color32::from_rgb(22, 130, 90)
+    Color32::from_rgb(77, 193, 143)
 }
 pub fn warn() -> Color32 {
-    Color32::from_rgb(180, 118, 0)
+    Color32::from_rgb(232, 185, 88)
 }
 pub fn err() -> Color32 {
-    Color32::from_rgb(196, 48, 48)
+    Color32::from_rgb(245, 116, 126)
 }
 #[allow(dead_code)]
 pub fn accent() -> Color32 {
@@ -30,36 +49,47 @@ pub fn text_dim() -> Color32 {
 }
 
 pub fn plain() -> Color32 {
-    Color32::from_rgb(52, 64, 60)
+    TEXT_DIM
 }
 pub fn text() -> Color32 {
     TEXT
 }
 
-/// 主操作按钮：深青绿底白字。
+/// Accent buttons use dark text to retain contrast on the light accent.
 pub fn primary_btn(text: &str) -> egui::Button<'static> {
-    egui::Button::new(egui::RichText::new(text.to_owned()).color(Color32::WHITE).strong())
+    egui::Button::new(egui::RichText::new(text.to_owned()).color(BG).strong())
         .fill(ACCENT)
         .stroke(egui::Stroke::NONE)
         .rounding(egui::Rounding::same(6.0))
 }
 
+pub fn external_link(
+    ui: &mut egui::Ui,
+    label: impl Into<egui::WidgetText>,
+    url: impl Into<String>,
+) -> egui::Response {
+    ui.add_enabled(
+        !crate::runtime::offline(),
+        egui::Hyperlink::from_label_and_url(label, url.into()),
+    )
+}
+
 pub fn apply(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     let v = &mut style.visuals;
-    *v = egui::Visuals::light();
+    *v = egui::Visuals::dark();
 
     v.panel_fill = BG;
     v.window_fill = BG;
-    v.extreme_bg_color = Color32::from_rgb(223, 232, 229);
-    v.faint_bg_color = Color32::from_rgb(237, 244, 241);
+    v.extreme_bg_color = Color32::from_rgb(7, 9, 13);
+    v.faint_bg_color = Color32::from_rgb(18, 22, 30);
     v.override_text_color = Some(TEXT);
     v.hyperlink_color = ACCENT;
     v.selection.bg_fill = ACCENT;
-    v.selection.stroke = egui::Stroke::new(1.0_f32, ACCENT);
+    v.selection.stroke = egui::Stroke::new(1.0_f32, BG);
     v.window_stroke = egui::Stroke::new(1.0_f32, BORDER);
 
-    v.widgets.noninteractive.bg_fill = Color32::from_rgb(235, 241, 238);
+    v.widgets.noninteractive.bg_fill = WIDGET;
     v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.1_f32, TEXT);
     v.widgets.inactive.bg_fill = WIDGET;
     v.widgets.inactive.weak_bg_fill = WIDGET;

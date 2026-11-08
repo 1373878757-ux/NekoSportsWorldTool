@@ -3,9 +3,9 @@
 //! recordssummary / personalSemesterCompleted(最近 rrid)。
 
 use super::{mobile, theme, App};
+use chrono::TimeZone;
 use eframe::egui;
 use egui::RichText;
-use chrono::TimeZone;
 use serde_json::Value;
 
 #[derive(Default)]
@@ -18,7 +18,10 @@ impl App {
         ui.add_space(6.0);
         mobile::row(ui, |ui| {
             if ui
-                .add_enabled(!self.user_busy, theme::primary_btn("刷新"))
+                .add_enabled(
+                    !crate::runtime::offline() && !self.user_busy,
+                    theme::primary_btn("刷新"),
+                )
                 .clicked()
             {
                 self.refresh_user_page();
@@ -38,7 +41,9 @@ impl App {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                for error in &info.errors { ui.colored_label(theme::warn(), error); }
+                for error in &info.errors {
+                    ui.colored_label(theme::warn(), error);
+                }
                 section(ui, "个人信息", |ui| {
                     let rows = profile_rows(&info.profile);
                     if rows.is_empty() {
@@ -54,7 +59,11 @@ impl App {
 
                 section(ui, "完成状态", |ui| {
                     if info.completed.is_null() {
-                        ui.label(if info.errors.is_empty() { "（暂无完成状态数据）" } else { "（完成状态未知，本次查询未全部成功）" });
+                        ui.label(if info.errors.is_empty() {
+                            "（暂无完成状态数据）"
+                        } else {
+                            "（完成状态未知，本次查询未全部成功）"
+                        });
                     } else {
                         grid(ui, "done_grid", &localized(&info.completed));
                     }
@@ -226,7 +235,9 @@ const PROFILE_KEYS: &[(&str, &str)] = &[
 fn profile_rows(profile: &Value) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (key, label) in PROFILE_KEYS {
-        let Some(val) = profile.get(key) else { continue };
+        let Some(val) = profile.get(key) else {
+            continue;
+        };
         let text = match val {
             Value::String(s) if !s.is_empty() => s.clone(),
             Value::Number(n) if n.as_f64() != Some(0.0) => n.to_string(),

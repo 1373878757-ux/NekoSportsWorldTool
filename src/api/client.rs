@@ -123,6 +123,7 @@ impl ApiClient {
         ua: &str,
         extra_headers: &[(String, String)],
     ) -> Result<RequestOutcome, String> {
+        crate::runtime::ensure_network_allowed()?;
         self.ensure_session_valid()?;
         let uid = self.uid();
         let token = self.token();

@@ -27,6 +27,7 @@ pub fn sign_url(client: &mut ApiClient, method: &str, key: &str) -> Result<Strin
 
 /// PUT 上传 OBS 对象。
 pub fn put_object(signed_url: &str, payload: &[u8], log: &mut dyn FnMut(&str)) -> Result<(), String> {
+    crate::runtime::ensure_network_allowed()?;
     let agent = super::client::make_agent();
     let resp = agent
         .put(signed_url)
@@ -64,6 +65,7 @@ fn shorten(url: &str) -> &str {
 /// 回读验证（GET 签名）。
 #[allow(dead_code)]
 pub fn fetch_object(client: &mut ApiClient, key: &str, log: &mut dyn FnMut(&str)) -> Result<Value, String> {
+    crate::runtime::ensure_network_allowed()?;
     let signed = sign_url(client, "Get", key)?;
     let agent = super::client::make_agent();
     let resp = agent.get(&signed).call().map_err(super::client::ureq_err)?;

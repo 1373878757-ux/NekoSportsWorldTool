@@ -23,6 +23,9 @@ impl App {
 
     /// 检查更新；manual=true 时切到关于页并显示状态。
     pub fn check_update(&mut self, manual: bool) {
+        if !self.allow_network() {
+            return;
+        }
         if self.update.checking || self.update.downloading {
             return;
         }
@@ -47,6 +50,9 @@ impl App {
 
     /// 下载并应用更新（桌面：解包替换 exe；Android：APK 落私有目录）。
     pub fn start_update_download(&mut self, rel: ReleaseInfo) {
+        if !self.allow_network() {
+            return;
+        }
         if self.update.downloading {
             return;
         }
@@ -89,6 +95,14 @@ impl App {
     }
 
     pub(crate) fn refresh_school_route(&mut self, force: bool) {
+        if crate::runtime::offline() {
+            if !self.config.osm_path.is_empty() {
+                self.load_osm_async(self.config.osm_path.clone());
+            } else {
+                self.status = crate::runtime::OFFLINE_MESSAGE.into();
+            }
+            return;
+        }
         if self.run_page.route_mode != RouteMode::Road {
             return;
         }
@@ -290,6 +304,10 @@ impl App {
     }
 
     pub(crate) fn fetch_ip(&mut self) {
+        if !self.allow_network() {
+            self.ip = "离线".into();
+            return;
+        }
         self.spawn_job(|tx| {
             let agent = crate::api::client::make_agent();
             let mut log = App::logger(tx.clone());
@@ -326,6 +344,9 @@ impl App {
     }
 
     pub(crate) fn do_login(&mut self) {
+        if !self.allow_network() {
+            return;
+        }
         if self.username.is_empty() || self.password.is_empty() {
             self.status = "请填写账号和密码".into();
             return;
@@ -402,6 +423,9 @@ impl App {
     }
 
     pub fn refresh_ai_list(&mut self) {
+        if !self.allow_network() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             self.status = "请先登录".into();
             return;
@@ -424,6 +448,9 @@ impl App {
     }
 
     pub fn refresh_records(&mut self) {
+        if !self.allow_network() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             self.status = "请先登录".into();
             return;
@@ -447,6 +474,9 @@ impl App {
 
     /// 我的页数据聚合。
     pub fn refresh_user_page(&mut self) {
+        if !self.allow_network() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             self.status = "请先登录".into();
             return;
@@ -473,6 +503,9 @@ impl App {
 
     /// 拉取单条跑步详情。
     pub fn fetch_run_detail(&mut self, rrid: i64) {
+        if !self.allow_network() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -501,6 +534,9 @@ impl App {
 
     /// 拉取单条 AI 记录全量详情。
     pub fn fetch_ai_detail(&mut self, id: i64) {
+        if !self.allow_network() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -518,6 +554,9 @@ impl App {
 
     /// AI 记录：遍历全部项目合并（按天排序）。
     pub fn refresh_ai_records(&mut self) {
+        if !self.allow_network() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             self.status = "请先登录".into();
             return;
@@ -576,7 +615,12 @@ impl App {
 
     /// 学期 + 违规自查（登录 / 跑步提交成功后自动调用）。
     pub fn refresh_data_page(&mut self) {
-        if self.data_page.cheat_checking { return; }
+        if !self.allow_network() {
+            return;
+        }
+        if self.data_page.cheat_checking {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             self.status = "请先登录".into();
             return;
@@ -629,7 +673,12 @@ impl App {
     }
 
     pub fn refresh_cheat_only(&mut self) {
-        if self.data_page.cheat_checking { return; }
+        if !self.allow_network() {
+            return;
+        }
+        if self.data_page.cheat_checking {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             self.status = "请先登录".into();
             return;
@@ -658,6 +707,9 @@ impl App {
 
     /// 榜单查询：kind=main|indoor|history。
     pub fn refresh_rank(&mut self, kind: &str, subtype: i64) {
+        if !self.allow_network() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             self.status = "请先登录".into();
             return;
