@@ -45,6 +45,7 @@ try {
                 if ($AllowMissingOpenGLContext -and $process.ExitCode -eq 1 -and
                     $diagnostic.Contains("egui_glow: OpenGL: egui_glow requires opengl 2.0+.")) {
                     $guiSmokeStatus = "unavailable_missing_opengl_2_context"
+                    $process.Dispose()
                     $process = $null
                     break
                 }
@@ -59,6 +60,7 @@ try {
         if (-not $process.CloseMainWindow()) { throw "GUI has no responsive main window" }
         if (-not $process.WaitForExit(10000)) { throw "GUI did not exit after normal window close" }
         if ($process.ExitCode -ne 0) { throw "GUI exit code was $($process.ExitCode)" }
+        $process.Dispose()
         $process = $null
     }
     if ($guiSmokeStatus -eq "passed") {
@@ -69,8 +71,24 @@ try {
         Write-Warning "The hosted runner has no OpenGL 2.0 context; GUI smoke could not run. Windows desktop acceptance remains pending."
     }
 } finally {
-    if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+    if ($process) {
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force
+            $process.WaitForExit(5000) | Out-Null
+        }
+        $process.Dispose()
+    }
     $env:NSWT_OFFLINE = $oldOffline
     $env:NSWT_DATA_DIR = $oldData
-    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }
+    if (Test-Path -LiteralPath $temporary) {
+        for ($attempt = 1; $attempt -le 10; $attempt++) {
+            try {
+                Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction Stop
+                break
+            } catch {
+                if ($attempt -eq 10) { throw }
+                Start-Sleep -Milliseconds 250
+            }
+        }
+    }
 }
