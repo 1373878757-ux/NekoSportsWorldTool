@@ -17,6 +17,8 @@
 | 第二轮小修复提交 | `f3b91f287aa7c928bc22f24cd9b6a2a0a677e9f1` |
 | 最终字节保全修复提交 | `0b1ff9ec1ddee434bf80b866189146764bd8c381`，已推送同一开发分支 |
 | Windows smoke 状态修复提交 | `36eeab7405f0e6f72d4faaa2fd73b509b274e84d`，记录标准 Runner OpenGL context 限制 |
+| 当前 UI 提交 / Windows 构建提交 | `a4c5dcf4d2953f3f556a9911f735b8653cb4e825`，Windows Run `42509136365` 已成功上传 artifact |
+| 当前离线 Mac 验证包 | `/Users/mac/Desktop/run fasting/verification/gui/NekoSportsWorldTool.app`；GUI 二进制 SHA-256 `a1e99e45d8e0108483a09a68dc4d026d2b4215bcd54512fd961cb29f78de178f` |
 
 源码已克隆；修改功能前完成原始源码编译基线，未重置已有其他远端分支。日志根为 `/Users/mac/Desktop/run fasting/verification/baseline`。
 
@@ -40,7 +42,7 @@
 
 ## 修改后验证
 
-2026-11-08 最终源码 `0b1ff9e` 的本地自动化日志已实际生成，位置为 `/Users/mac/Desktop/run fasting/verification/local/source-0b1ff9e`；`results.json` 的七项 locked 检查、测试、构建及 clippy 均退出 0。格式检查另行记录于上级 `local` 目录，失败不含在该七项通过结论中。真实 GUI 单独验收，不以编译和自动化绘制测试替代桌面窗口。
+2026-11-08 前一轮源码 `0b1ff9e` 的本地自动化日志已实际生成，位置为 `/Users/mac/Desktop/run fasting/verification/local/source-0b1ff9e`；`results.json` 的七项 locked 检查、测试、构建及 clippy 均退出 0。当前 UI 提交为 `a4c5dcf4d295`，其 Windows Actions 也已完成；格式检查另行记录于上级 `local` 目录，失败不含在通过结论中。真实 GUI 单独验收，不以编译和自动化绘制测试替代桌面窗口。
 
 | 命令/检查 | 结果与证据 |
 |---|---|
@@ -85,14 +87,14 @@
 
 最终源码 `0b1ff9e` 相对实际观测的 `17a7a68` 仅有 Windows 打包 API-set 识别、一个逻辑等价的 GUI 启用条件、测试格式和固定许可 Git 字节属性/工作流触发修正；上述真实 GUI 证据保留原出处，不改写成最终提交截图。最终源码的七项 Mac 自动化已全 0，两套 CLI 脚本各 30 项通过，元数据见 `local/source-0b1ff9e/results.json` 与 `binaries.json`。此前 `f3b91f2` 的验证日志单独保留，未覆盖。
 
-Windows Actions 第五轮 Run `42499555243` 在正确标记 GUI smoke unavailable 后，因 Windows 仍占用 `gui-1.stderr.txt` 而清理失败，artifact 未上传；第六轮 Run `42500313727` 成功构建并上传。最新下载包 EXE SHA-256 为 `422fa5f4204f3a759544c287814e85a42d4b24627348ca3466eaebc244162512`，539 个文件中的 538 项内部校验及 PE x64、版本、内嵌 commit、533 份许可均验证通过。工作流仍将 GUI smoke 标记为 `unavailable_missing_opengl_2_context`，不是通过。ZIP SHA-256 为 `e98282e8c4ac456e3ea6e287b65114047de1b03849e1fe7a72c9c80f0e5e7817`，本地文件为 `/Users/mac/Desktop/run fasting/artifacts/windows-run-42500313727/NekoSportsWorldTool-J-claude-Windows-x64/NekoSportsWorldTool-J-claude-Windows-x64.zip`。此项与本机 Mac 离线 GUI 验收分开；Windows 10/11 的实际图形与 DPI 测试仍待实机完成。
+Windows Actions 第五轮 Run `42499555243` 在正确标记 GUI smoke unavailable 后，因 Windows 仍占用 `gui-1.stderr.txt` 而清理失败，artifact 未上传；第六轮 Run `42500313727` 的产物作为历史修正记录保留。最终 Run `42509136365` 成功构建并上传：EXE SHA-256 为 `02f41aeb49578b0f51fbee038dda280bde4f3dd921bf8da119c1480f4dad7311`，539 个文件中的 538 项内部校验及 PE x64、版本、内嵌 commit、533 份许可均验证通过。工作流仍将 GUI smoke 标记为 `unavailable_missing_opengl_2_context`，不是通过。ZIP SHA-256 为 `62ea2f2c0d58639d72ba847b63ed90f78ba9ac84dcb109a4f77f61103ad5b25d`，本地文件为 `/Users/mac/Desktop/run fasting/artifacts/windows-run-42509136365/NekoSportsWorldTool-J-claude-Windows-x64.zip`。此项与本机 Mac 离线 GUI 验收分开；Windows 10/11 的实际图形与 DPI 测试仍待实机完成。
 
-| 最终 Mac 二进制 | 版本 / SHA-256 |
+| Mac 验证二进制 | 版本 / SHA-256 |
 |---|---|
-| GUI（同时提供 CLI 入口） | `NekoSportsWorldTool 0.3.1 (0b1ff9ec1dde; aarch64-apple-darwin)`；`7bc76b9df5060fdbb6fa681a65c595a024628c0d9b9134cd7a4a8418c8dd821f` |
-| CLI-only | 相同版本/目标；`f87222ebb470955ece92e0352dde277748b86ad2142e22d3bf587a25ec0b6907` |
+| 当前 GUI（同时提供 CLI 入口） | `NekoSportsWorldTool 0.3.1 (a4c5dcf4d295; aarch64-apple-darwin)`；`a1e99e45d8e0108483a09a68dc4d026d2b4215bcd54512fd961cb29f78de178f` |
+| 历史 CLI-only 证据 | 前一轮 `0b1ff9e` 构建；`f87222ebb470955ece92e0352dde277748b86ad2142e22d3bf587a25ec0b6907` |
 
-安全离线开发 `.app` 位于 `/Users/mac/Desktop/run fasting/verification/gui/NekoSportsWorldTool.app`。2026-11-09 对最终 GUI 二进制实际启动并观察主窗口：版本 `0.3.1 (0b1ff9ec1dde; aarch64-apple-darwin)`，SHA-256 `7bc76b9df5060fdbb6fa681a65c595a024628c0d9b9134cd7a4a8418c8dd821f`；`NSWT_OFFLINE=1`、隔离数据目录 `/tmp/nswt-final-gui-20261109`，CUA 确认原窗口标题、离线横幅和未登录状态。启动器默认目录在验证后恢复为 `gui/bundle-first-launch/isolated-data`。本轮没有重新捕获启动页；启动页与中文署名实际截图仍来自 `17a7a68` 的验证，但 `0b1ff9e` 后至当前提交没有修改 Mac GUI 展示逻辑。观察详情见 `gui/final-current-run.json`。早期包装器结构与 arm64 检查另保留在 `local/final-mac-bundle-check.json`。
+安全离线开发 `.app` 位于 `/Users/mac/Desktop/run fasting/verification/gui/NekoSportsWorldTool.app`。2026-11-09 对当前 GUI 二进制实际启动并观察主窗口：版本 `0.3.1 (a4c5dcf4d295; aarch64-apple-darwin)`，SHA-256 `a1e99e45d8e0108483a09a68dc4d026d2b4215bcd54512fd961cb29f78de178f`；`NSWT_OFFLINE=1`、隔离数据目录，CUA 确认原窗口标题、离线横幅、启动页、完整署名和状态栏文案。启动页完整阶段的历史截图和当前源码时间轴测试均已保留。该 `.app` 是本地验证工具，不是签名/公证发行包。
 
 空闲 CPU 和 socket 观察仅说明采样区间内的进程表现，不是历史网络流量审计，也不替代离线传输策略及 Mock 测试。不对所有机器的 CPU、显卡或内存占用作保证。
 

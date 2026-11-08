@@ -4,7 +4,7 @@
 
 目标：Windows 10 / Windows 11 x64，`x86_64-pc-windows-msvc`。本次使用自有 Fork 的 Windows Runner，不以 Mac target 安装或旧 GNU 交叉编译报告代替 MSVC 构建证据。
 
-前四次 Windows Actions 分别修复 API-set 误判、Windows checkout 行尾改变固定许可 SHA，以及标准 Windows Server 2022 Runner 缺少 OpenGL 2.0+ context 的状态分类；第四轮已成功上传 artifact。第五轮通过构建但在 GUI smoke unavailable 后清理仍被占用的临时 stderr 文件时失败，未上传 artifact。第六轮修复清理逻辑后成功上传 artifact。CI 对精确 OpenGL context 错误记录为 `GUI smoke unavailable`，不算 GUI 通过；CLI、PE、许可、ZIP 和校验错误仍会令任务失败。最新下载包经独立校验：ZIP SHA-256 `e98282e8c4ac456e3ea6e287b65114047de1b03849e1fe7a72c9c80f0e5e7817`，EXE SHA-256 `422fa5f4204f3a759544c287814e85a42d4b24627348ca3466eaebc244162512`。该 CI 结果不代表 Windows 10/11 实机 GUI 验收通过。
+前几次 Windows Actions 分别修复 API-set 误判、Windows checkout 行尾改变固定许可 SHA、标准 Windows Server 2022 Runner 缺少 OpenGL 2.0+ context 的状态分类，以及 smoke 临时日志清理问题。最新 Run `42509136365` 已以提交 `a4c5dcf4d2953f3f556a9911f735b8653cb4e825` 成功上传 artifact。CI 对精确 OpenGL context 错误记录为 `GUI smoke unavailable`，不算 GUI 通过；CLI、PE、许可、ZIP 和校验错误仍会令任务失败。最新下载包经独立校验：ZIP SHA-256 `62ea2f2c0d58639d72ba847b63ed90f78ba9ac84dcb109a4f77f61103ad5b25d`，EXE SHA-256 `02f41aeb49578b0f51fbee038dda280bde4f3dd921bf8da119c1480f4dad7311`。该 CI 结果不代表 Windows 10/11 实机 GUI 验收通过。
 
 - 仓库：`1373878757-ux/NekoSportsWorldTool`
 - 分支：`feature/j-claude-cross-platform`
@@ -18,8 +18,13 @@
 - 第四轮 Run ID：`42496483831`，<https://github.com/1373878757-ux/NekoSportsWorldTool/actions/runs/42496483831>（success；GUI smoke 状态明确为 unavailable）
 - 第五轮 Run ID：`42499555243`，<https://github.com/1373878757-ux/NekoSportsWorldTool/actions/runs/42499555243>（failure：smoke stderr 文件被进程占用，清理失败，artifact skipped）
 - 第六轮 Run ID：`42500313727`，<https://github.com/1373878757-ux/NekoSportsWorldTool/actions/runs/42500313727>（success；GUI smoke 状态明确为 unavailable）
-- 最新 Artifact：`NekoSportsWorldTool-J-claude-Windows-x64`，ID `13625795505`，大小 `16,477,787` bytes
-- 已下载 ZIP：[NekoSportsWorldTool-J-claude-Windows-x64.zip](</Users/mac/Desktop/run fasting/artifacts/windows-run-42500313727/NekoSportsWorldTool-J-claude-Windows-x64/NekoSportsWorldTool-J-claude-Windows-x64.zip>)；独立校验 JSON：`/Users/mac/Desktop/run fasting/artifacts/windows-run-42500313727/NekoSportsWorldTool-J-claude-Windows-x64/independent-artifact-verification.json`
+- 最新 Run ID：`42509136365`，<https://github.com/1373878757-ux/NekoSportsWorldTool/actions/runs/42509136365>（提交 `a4c5dcf4d295`；success；GUI smoke 状态明确为 unavailable）
+- 最新 Artifact ID：`13628238094`，大小 `16,479,103` bytes
+- 最新 ZIP SHA-256：`62ea2f2c0d58639d72ba847b63ed90f78ba9ac84dcb109a4f77f61103ad5b25d`
+- 最新 EXE SHA-256：`02f41aeb49578b0f51fbee038dda280bde4f3dd921bf8da119c1480f4dad7311`
+- 最新 ZIP：[NekoSportsWorldTool-J-claude-Windows-x64.zip](</Users/mac/Desktop/run fasting/artifacts/windows-run-42509136365/NekoSportsWorldTool-J-claude-Windows-x64.zip>)；`windows-build-evidence.json` 记录 `fileCount=539`、`target=x86_64-pc-windows-msvc`、`windows10And11PhysicalAcceptance=pending`
+- 历史 Artifact：`NekoSportsWorldTool-J-claude-Windows-x64`，ID `13625795505`，大小 `16,477,787` bytes
+- 已下载历史 ZIP：[NekoSportsWorldTool-J-claude-Windows-x64.zip](</Users/mac/Desktop/run fasting/artifacts/windows-run-42500313727/NekoSportsWorldTool-J-claude-Windows-x64/NekoSportsWorldTool-J-claude-Windows-x64.zip>)；独立校验 JSON 保留于旧 Run 目录
 
 首轮失败点：`scripts/package_windows.ps1:37` 把导入项 `api-ms-win-core-synch-l1-2-0.dll` 作为必须在 System32 发现的物理 DLL，抛出 `Non-system DLL requires explicit packaging`。失败发生在打包依赖检查，未运行解压后 GUI 烟测，也未上传 artifact。已将规范命名的 Windows API-set 契约从物理 DLL 存在性检查中豁免，同时保留真实 DLL、动态 VC 运行库与依赖白名单检查；该修复已在后续 Actions 运行中通过。
 
@@ -27,7 +32,7 @@
 
 第二轮 `42494146681` 同样完成 GUI/CLI 检查、测试、clippy 和 release 构建，API-set 检查已通过，但许可 collector 报 `Upstream license hash mismatch for accesskit@0.16.3`，未到解压后 EXE 烟测或 artifact 上传。真实 Git checkout 复现确认 `core.autocrlf=true` 改写了固定许可文本：Apache 文件从原 Git blob 9723 字节变为 9899 字节，SHA-256 从 `62c7a1e3…` 变为 `20fe7b00…`；MIT/chromium 同样改变，manifest 始终匹配原始 blob。证据为 `run-42494146681-crlf-reproduction.json` 与该轮 full/failed 日志。
 
-修复范围为 `.gitattributes` 对 `scripts/license_sources/**` 设置 `-text`，并让该文件变更触发工作流；保留原始许可源字节、collector 及 manifest 的严格 SHA 校验，不用放宽或重算错误文本 hash 的方式绕过完整性检查。真实 `core.autocrlf=true` checkout-index 前后比较已确认 30 份唯一固定许可文本全部保持原始 SHA，证据为 `license-crlf-before.json` 与 `license-crlf-after.json`。第三轮已确认 262 个包、533 份许可文件收集通过，旧的 Windows checkout 行尾问题已解决；第三轮当时剩余的 CI 限制是解压后 GUI smoke 在 Actions 环境中报告缺少 OpenGL 2.0+，并非许可校验失败。第四轮上传过 artifact；第五轮因清理仍被占用的 GUI smoke 临时 stderr 文件失败且未上传。第六轮 `42500313727` 已成功上传并独立核验最新 ZIP；Windows 10/11 实机 GUI 验收仍待完成。
+修复范围为 `.gitattributes` 对 `scripts/license_sources/**` 设置 `-text`，并让该文件变更触发工作流；保留原始许可源字节、collector 及 manifest 的严格 SHA 校验，不用放宽或重算错误文本 hash 的方式绕过完整性检查。真实 `core.autocrlf=true` checkout-index 前后比较已确认 30 份唯一固定许可文本全部保持原始 SHA，证据为 `license-crlf-before.json` 与 `license-crlf-after.json`。第三轮已确认 262 个包、533 份许可文件收集通过，旧的 Windows checkout 行尾问题已解决；第三轮当时剩余的 CI 限制是解压后 GUI smoke 在 Actions 环境中报告缺少 OpenGL 2.0+，并非许可校验失败。第四轮上传过 artifact；第五轮因清理仍被占用的 GUI smoke 临时 stderr 文件失败且未上传。第六轮 `42500313727` 已成功上传并独立核验历史 ZIP；最终 Run `42509136365` 的当前 ZIP/EXE 摘要见本节顶部。Windows 10/11 实机 GUI 验收仍待完成。
 
 第三轮 Actions `42495076057` 于 `2026-11-08T15:38:12Z` 在 `windows-2022`（Microsoft Windows Server 2022，镜像 `win22/20261101.353`）结束。GUI/CLI 检查测试、CLI-only feature boundary 和两个 release 构建均为 success：GUI 主库 204、路由库 8、集成 7；CLI-only 主库 136、路由库 8、集成 7，均无失败。打包脚本完成 PE x64/版本/署名和依赖检查、许可收集、包内与 ZIP SHA 生成、解压校验；解压后的 CLI smoke 先通过。随后的真实 GUI smoke 启动进程以 code 1 退出，stderr 为 `GUI 启动失败: egui_glow: OpenGL: egui_glow requires opengl 2.0+.`；该 Runner 未提供程序所需的 OpenGL 2.0+ context，导致打包步骤 failure，`actions/upload-artifact@v4` skipped。ZIP 曾在 Runner 临时 `dist` 中生成，但没有上传，日志中也没有记录其 SHA；不能下载或作为已交付产物验收。证据为 `/Users/mac/Desktop/run fasting/verification/windows/run-42495076057-summary.json`、`-metadata.json`、`-full.log` 与 `-failed.log`。
 
@@ -56,13 +61,13 @@
 
 | 项目 | 本次证据 |
 |---|---|
-| Actions URL / Run ID / Commit | 第六轮 `4965f6c` / `42500313727` workflow success；第五轮 `42499555243` 因临时文件清理失败；前四轮见上文 |
+| Actions URL / Run ID / Commit | 最终 `a4c5dcf` / `42509136365` workflow success；历史修复与失败轮次见上文 |
 | MSVC check / test / build | 通过；GUI 204+8+7、CLI-only 136+8+7 全通过；CLI-only boundary 与 GUI/CLI release build 通过 |
 | EXE 文件、架构、版本、依赖、签名 | PE32+ x64，版本 `0.3.1`，ProductName `NekoSportsWorldTool`，署名 `prod.by 田宸宇 J Claude`，无动态 CRT imports，签名 `NotSigned` |
 | ZIP 解压与解压后 CLI / GUI | 解压后 CLI smoke 通过；GUI smoke `unavailable_missing_opengl_2_context`，未标为通过；实机 GUI 待 Windows 10/11 |
-| 下载 ZIP SHA-256 / EXE SHA-256 | `e98282e8c4ac456e3ea6e287b65114047de1b03849e1fe7a72c9c80f0e5e7817` / `422fa5f4204f3a759544c287814e85a42d4b24627348ca3466eaebc244162512` |
-| 包内校验与内容 | 539 个文件，538 个内部 hash 通过，533 份许可；ZIP `17,168,293` bytes，EXE `28,460,032` bytes |
-| 本地下载产物 | `/Users/mac/Desktop/run fasting/artifacts/windows-run-42500313727/NekoSportsWorldTool-J-claude-Windows-x64/NekoSportsWorldTool-J-claude-Windows-x64.zip`；artifact ID `13625795505`，GitHub artifact 大小 `16,477,787` bytes |
+| 下载 ZIP SHA-256 / EXE SHA-256 | `62ea2f2c0d58639d72ba847b63ed90f78ba9ac84dcb109a4f77f61103ad5b25d` / `02f41aeb49578b0f51fbee038dda280bde4f3dd921bf8da119c1480f4dad7311` |
+| 包内校验与内容 | 539 个文件，538 个内部 hash 通过，533 份许可；ZIP `17,169,644` bytes，EXE `28,453,888` bytes |
+| 本地下载产物 | `/Users/mac/Desktop/run fasting/artifacts/windows-run-42509136365/NekoSportsWorldTool-J-claude-Windows-x64.zip`；artifact ID `13628238094`，GitHub artifact 大小 `16,479,103` bytes |
 
 Windows Runner 成功不能代替 Windows 10/11 的图形、DPI 和双击启动实机验收；项目详见 Windows_Acceptance_Checklist.md。
 

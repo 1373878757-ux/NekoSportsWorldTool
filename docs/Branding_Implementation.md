@@ -25,6 +25,8 @@ prod.by 田宸宇 J Claude
 
 ## 验证状态
 
+当前源码提交为 `a4c5dcf4d2953f3f556a9911f735b8653cb4e825`；Windows Actions Run `42509136365` 已成功完成并上传 ZIP。该 Run 的 `BUILD-INFO.txt` 与 `windows-build-evidence.json` 均记录完整署名 `prod.by 田宸宇 J Claude`、产品名 `NekoSportsWorldTool` 和 `target=x86_64-pc-windows-msvc`；Windows Runner 的 GUI smoke 因缺少 OpenGL 2.0+ context 仍为 unavailable，不能替代 Windows 10/11 实机验收。
+
 `src/presentation.rs` 为实际统一常量模块。2026-11-08 的 `verification/local/gui-tests.log` 已通过 `presentation_text_matches_the_approved_spelling_exactly` 与 `gui_files_do_not_duplicate_the_approved_presentation_literals`，检查大小写、空格、三个 ASCII 点号和 GUI 文件禁止重复硬编码。
 
 同次测试已通过中文完整署名字形覆盖、3500 ms 最短展示和 400 ms 淡出时间轴、标题/线条/署名阶段、失败/超时/重试、启动期间主窗口交互隔离，以及小窗口/HiDPI 的展示文案和边界测试。主界面状态栏的展示常量现为 `Powered by J Claude`；About 仍保留 YanamiNeko、ConCosew、原仓库、CC BY-NC 4.0 和定制说明。
@@ -33,6 +35,6 @@ prod.by 田宸宇 J Claude
 
 真实 GUI 总记录为 `verification/gui/gui-acceptance.json`；慢初始化截图通过隔离合成配置的本地读取延迟捕获，不替换程序展示逻辑。实际文案由同一常量模块进入启动页与 About，截图观测与精确匹配测试共同形成证据。
 
-初次截图的 About 构建号仍为未提交修改时原 HEAD `e229abdbab71`；实施源码已提交并推送为 `17a7a68b92dbf216fd81c21055f46fbe9b3672b2`。提交后重建的 `about-committed.jpg` 已实际显示 `17a7a68b92db`，`resized-main.jpg` 与该 About 截图记录窗口变大后的真实布局。损坏合成配置时，`gui/error-retry/error-screen.jpg` 中保留相同的两行展示文案，错误与重试按钮可见；修复后真实重试进入主窗口。
+初次截图的 About 构建号仍为未提交修改时原 HEAD `e229abdbab71`；后续截图保留为历史 GUI 证据。当前源码已提交并推送为 `a4c5dcf4d2953f3f556a9911f735b8653cb4e825`，最终 `.app` 的 `--version` 与 SHA 已在 Mac_Deployment_Report.md 记录。`resized-main.jpg` 与 About 截图记录窗口变大后的真实布局。损坏合成配置时，`gui/error-retry/error-screen.jpg` 中保留相同的两行展示文案，错误与重试按钮可见；修复后真实重试进入主窗口。
 
-Windows Actions 状态分类修复提交 `36eeab7405f0e6f72d4faaa2fd73b509b274e84d` 不改变展示常量或图形逻辑；最终 Run `42500313727` 构建并上传的 ZIP/EXE 已独立校验，摘要在 Windows_Build_Report.md。标准 Runner 缺少 OpenGL 2.0+ context 时，工作流将真实 GUI smoke 标为 unavailable，不声称通过。Mac 启动页/署名截图仍属于 `17a7a68`；2026-11-09 已重新观察最终二进制的离线主窗口、标题和未登录状态，详见 Mac_Deployment_Report.md。Windows 10/11 实机启动页、中文署名、窗口标题、DPI 和交互仍待实机单独验收。
+Windows Actions 状态分类修复提交 `36eeab7405f0e6f72d4faaa2fd73b509b274e84d` 不改变展示常量或图形逻辑；最终 Run `42509136365`（提交 `a4c5dcf4d295`）构建并上传的 ZIP/EXE 已独立校验，摘要在 Windows_Build_Report.md。标准 Runner 缺少 OpenGL 2.0+ context 时，工作流将真实 GUI smoke 标为 unavailable，不声称通过。Mac 启动页/署名截图属于早期同一 UI 逻辑的真实观测；2026-11-09 已重新观察最终二进制的离线主窗口、标题、完整署名和状态栏文案，详见 Mac_Deployment_Report.md。Windows 10/11 实机启动页、中文署名、窗口标题、DPI 和交互仍待实机单独验收。

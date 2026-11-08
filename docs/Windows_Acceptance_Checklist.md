@@ -10,10 +10,10 @@
 | Windows 版本 / Build / x64 | 待实机验证 |
 | CPU / GPU / 显卡驱动 | 待实机验证 |
 | 显示器分辨率 / 缩放 | 待实机验证 |
-| ZIP SHA-256 / EXE SHA-256 | `e98282e8c4ac456e3ea6e287b65114047de1b03849e1fe7a72c9c80f0e5e7817` / `422fa5f4204f3a759544c287814e85a42d4b24627348ca3466eaebc244162512` |
-| 源码版本 / 构建提交 | `0.3.1` / `4965f6c25a0e606010ab7fbfdebf9a68892d0a89`；下载后已核对内嵌 commit |
+| ZIP SHA-256 / EXE SHA-256 | `62ea2f2c0d58639d72ba847b63ed90f78ba9ac84dcb109a4f77f61103ad5b25d` / `02f41aeb49578b0f51fbee038dda280bde4f3dd921bf8da119c1480f4dad7311` |
+| 源码版本 / 构建提交 | `0.3.1` / `a4c5dcf4d2953f3f556a9911f735b8653cb4e825`；下载后已核对内嵌 commit |
 
-开发分支已推送。前三轮 Actions 分别因 API-set 误判、固定许可 SHA 行尾不符和标准 Runner 缺少 OpenGL 2.0+ context 而失败；第四轮上传成功但 GUI smoke unavailable；第五轮在清理被进程占用的临时 stderr 文件时失败；第六轮 Run `42500313727`（源码 `4965f6c25a0e606010ab7fbfdebf9a68892d0a89`）成功构建并上传 ZIP。解压、CLI smoke、PE 和 538 项内部 hash 独立验证通过，GUI smoke 仍为 `unavailable_missing_opengl_2_context`，不算通过。下载 ZIP 位于 `/Users/mac/Desktop/run fasting/artifacts/windows-run-42500313727/NekoSportsWorldTool-J-claude-Windows-x64/NekoSportsWorldTool-J-claude-Windows-x64.zip`。以下 Windows 10/11 桌面项目仍全部待实机验证，不能以 Runner 检查替代。
+开发分支已推送。最新 Run `42509136365`（源码 `a4c5dcf4d2953f3f556a9911f735b8653cb4e825`）成功构建并上传 ZIP。解压、CLI smoke、PE、许可和 538 项内部 hash 独立验证通过，GUI smoke 仍为 `unavailable_missing_opengl_2_context`，不算通过。下载 ZIP 位于 `/Users/mac/Desktop/run fasting/artifacts/windows-run-42509136365/NekoSportsWorldTool-J-claude-Windows-x64.zip`。以下 Windows 10/11 桌面项目仍全部待实机验证，不能以 Runner 检查替代。
 
 ## 启动与展示
 
