@@ -35,4 +35,4 @@ prod.by 田宸宇 J Claude
 
 初次截图的 About 构建号仍为未提交修改时原 HEAD `e229abdbab71`；实施源码已提交并推送为 `17a7a68b92dbf216fd81c21055f46fbe9b3672b2`。提交后重建的 `about-committed.jpg` 已实际显示 `17a7a68b92db`，`resized-main.jpg` 与该 About 截图记录窗口变大后的真实布局。损坏合成配置时，`gui/error-retry/error-screen.jpg` 中保留相同的两行展示文案，错误与重试按钮可见；修复后真实重试进入主窗口。
 
-Windows Actions 状态分类修复提交 `36eeab7405f0e6f72d4faaa2fd73b509b274e84d` 不改变展示常量或图形逻辑；Run `42496483831` 构建并上传的 ZIP/EXE 已独立校验，摘要在 Windows_Build_Report.md。标准 Runner 缺少 OpenGL 2.0+ context 时，工作流将真实 GUI smoke 标为 unavailable，不声称通过。Mac 真实截图仍属于 `17a7a68`；Windows 10/11 实机启动页、中文署名、窗口标题、DPI 和交互仍待实机单独验收。
+Windows Actions 状态分类修复提交 `36eeab7405f0e6f72d4faaa2fd73b509b274e84d` 不改变展示常量或图形逻辑；最终 Run `42500313727` 构建并上传的 ZIP/EXE 已独立校验，摘要在 Windows_Build_Report.md。标准 Runner 缺少 OpenGL 2.0+ context 时，工作流将真实 GUI smoke 标为 unavailable，不声称通过。Mac 启动页/署名截图仍属于 `17a7a68`；2026-11-09 已重新观察最终二进制的离线主窗口、标题和未登录状态，详见 Mac_Deployment_Report.md。Windows 10/11 实机启动页、中文署名、窗口标题、DPI 和交互仍待实机单独验收。

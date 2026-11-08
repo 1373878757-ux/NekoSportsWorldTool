@@ -77,19 +77,20 @@
 | 窗口大小变化 | 已从 1760×1504 截图像素的窗口调整至 3024×1774，`gui/resized-main.jpg` 和 `about-committed.jpg` 中控件、导航与署名正常；不等价于 Windows 系统 DPI 矩阵 |
 | 损坏文件错误与重试 | 构造合成损坏配置，实际显示错误、重试和退出；原字节保留、不创建替代身份、不显示私有测试标记。修复合成文件后点击重试进入主界面，最后退出 0；见 `gui/error-retry` 的截图、AX 文本、`corrupt-file-evidence.json` 与 `exit.json` |
 | 空闲进程观察 | 20 秒区间三次 `ps` 样本 CPU 均为 0.0%，累计 CPU 时间均为 0:00.63，RSS 约 89 MB；同时 `lsof` 未发现该 PID 的互联网 socket，`gui/idle-network-evidence.json` |
+| 最终二进制新一轮启动 | 2026-11-09 进程以 `NSWT_OFFLINE=1` 和 `/tmp/nswt-final-gui-20261109` 启动；CUA 确认主窗口、原窗口标题、离线提示及未登录状态。观察记录为 `gui/final-current-run.json`；本次未重新捕获 splash 截图 |
 
 初次截图来自功能修改完成但尚未提交时的构建，About 内嵌构建号显示原 HEAD `e229abdbab71`；不得将该截图当作提交版本的内嵌构建号证明。实施提交后 release 重建日志为 `gui-release-committed.log`，`17a7a68b92db` 构建号由 `about-committed.jpg` 单独证明。截图像素尺寸是测试截图记录，不据此推断显示器物理分辨率或系统缩放百分比。
 
 最终源码 `0b1ff9e` 相对实际观测的 `17a7a68` 仅有 Windows 打包 API-set 识别、一个逻辑等价的 GUI 启用条件、测试格式和固定许可 Git 字节属性/工作流触发修正；上述真实 GUI 证据保留原出处，不改写成最终提交截图。最终源码的七项 Mac 自动化已全 0，两套 CLI 脚本各 30 项通过，元数据见 `local/source-0b1ff9e/results.json` 与 `binaries.json`。此前 `f3b91f2` 的验证日志单独保留，未覆盖。
 
-Windows Actions 前三轮分别失败于 API-set 误检、固定许可 SHA 行尾不符和标准 Runner 缺少 OpenGL 2.0+ context。第四轮 Run `42496483831` 成功构建并上传 artifact；下载包的 EXE SHA-256 为 `b35828baa6d834b61d4b4838994d62e8bc84c42b3e2680423a42ebd8ba6663f3`，539 个文件中的 538 项内部校验及 PE x64、版本、内嵌 commit、533 份许可均验证通过。工作流如实标记 GUI smoke 为 `unavailable_missing_opengl_2_context`，不是通过。ZIP SHA-256 为 `13cf827b1baa29d5e49c4ca1f3e0874b06f493f398cd2964fa4cf7fa0f348c5d`，本地文件为 `/Users/mac/Desktop/run fasting/artifacts/windows-run-42496483831/NekoSportsWorldTool-J-claude-Windows-x64.zip`。此项与本机 Mac 离线 GUI 验收分开；Windows 10/11 的实际图形与 DPI 测试仍待实机完成。
+Windows Actions 第五轮 Run `42499555243` 在正确标记 GUI smoke unavailable 后，因 Windows 仍占用 `gui-1.stderr.txt` 而清理失败，artifact 未上传；第六轮 Run `42500313727` 成功构建并上传。最新下载包 EXE SHA-256 为 `422fa5f4204f3a759544c287814e85a42d4b24627348ca3466eaebc244162512`，539 个文件中的 538 项内部校验及 PE x64、版本、内嵌 commit、533 份许可均验证通过。工作流仍将 GUI smoke 标记为 `unavailable_missing_opengl_2_context`，不是通过。ZIP SHA-256 为 `e98282e8c4ac456e3ea6e287b65114047de1b03849e1fe7a72c9c80f0e5e7817`，本地文件为 `/Users/mac/Desktop/run fasting/artifacts/windows-run-42500313727/NekoSportsWorldTool-J-claude-Windows-x64/NekoSportsWorldTool-J-claude-Windows-x64.zip`。此项与本机 Mac 离线 GUI 验收分开；Windows 10/11 的实际图形与 DPI 测试仍待实机完成。
 
 | 最终 Mac 二进制 | 版本 / SHA-256 |
 |---|---|
 | GUI（同时提供 CLI 入口） | `NekoSportsWorldTool 0.3.1 (0b1ff9ec1dde; aarch64-apple-darwin)`；`7bc76b9df5060fdbb6fa681a65c595a024628c0d9b9134cd7a4a8418c8dd821f` |
 | CLI-only | 相同版本/目标；`f87222ebb470955ece92e0352dde277748b86ad2142e22d3bf587a25ec0b6907` |
 
-安全离线开发 `.app` 已换入最终 GUI 二进制，位置为 `/Users/mac/Desktop/run fasting/verification/gui/NekoSportsWorldTool.app`。包装器强制离线、默认数据目录绝对且隔离；`local/source-0b1ff9e/binaries.json` 记录包装器执行 `--version` 返回 `0b1ff9e` 版本并退出 0，包内实二进制 SHA 与上表一致。没有重新启动该最终包的 GUI；真实 GUI 观测仍按前述 `17a7a68` 出处报告。早期包装器结构与 arm64 检查另保留在 `local/final-mac-bundle-check.json`。
+安全离线开发 `.app` 位于 `/Users/mac/Desktop/run fasting/verification/gui/NekoSportsWorldTool.app`。2026-11-09 对最终 GUI 二进制实际启动并观察主窗口：版本 `0.3.1 (0b1ff9ec1dde; aarch64-apple-darwin)`，SHA-256 `7bc76b9df5060fdbb6fa681a65c595a024628c0d9b9134cd7a4a8418c8dd821f`；`NSWT_OFFLINE=1`、隔离数据目录 `/tmp/nswt-final-gui-20261109`，CUA 确认原窗口标题、离线横幅和未登录状态。启动器默认目录在验证后恢复为 `gui/bundle-first-launch/isolated-data`。本轮没有重新捕获启动页；启动页与中文署名实际截图仍来自 `17a7a68` 的验证，但 `0b1ff9e` 后至当前提交没有修改 Mac GUI 展示逻辑。观察详情见 `gui/final-current-run.json`。早期包装器结构与 arm64 检查另保留在 `local/final-mac-bundle-check.json`。
 
 空闲 CPU 和 socket 观察仅说明采样区间内的进程表现，不是历史网络流量审计，也不替代离线传输策略及 Mock 测试。不对所有机器的 CPU、显卡或内存占用作保证。
 
