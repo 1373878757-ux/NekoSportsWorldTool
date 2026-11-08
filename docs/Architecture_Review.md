@@ -5,7 +5,10 @@
 - 源仓库：ConCosew/NekoSportsWorldTool；原作者和原项目：YanamiNeko/NekoSportsWorldTool。
 - 原始基准提交：`e229abdbab71e377b86632e588e607413af4b93c`，原 Cargo 版本 `0.3.0`。
 - 定制开发分支：`feature/j-claude-cross-platform`；非商业使用与分享。
-- 本报告区分源码审查、原始构建结果与修改后待验证结果，不以历史 Windows 产物替代本次证据。
+- 本次已推送的实施提交：`17a7a68b92dbf216fd81c21055f46fbe9b3672b2`；版本 `0.3.1`。
+- 第二轮小修复提交：`f3b91f287aa7c928bc22f24cd9b6a2a0a677e9f1`；仅修正 Windows API-set 识别、等价布尔式与测试格式。
+- 最终字节保全修复提交：`0b1ff9ec1ddee434bf80b866189146764bd8c381`，已推送同一开发分支；仅新增固定许可源 `-text` 属性与相应工作流触发路径。
+- 本报告区分源码审查、原始构建、修改后自动化与真实窗口结果，不以历史 Windows 产物替代本次证据。
 
 ## 模块与数据流
 
@@ -13,6 +16,9 @@
 |---|---|---|
 | 桌面入口 | `src/main.rs`、`src/lib.rs` | 无参数 GUI；带参数 CLI；默认 `gui` Feature；CLI-only 可关闭默认 Features |
 | GUI | `src/ui/`，egui/eframe 0.29.1 | 页面状态、布局、事件绘制、线程结果接收、主题、字体、地图与关于页 |
+| 桌面初始化 | `src/ui/startup.rs`、`src/startup_data.rs` | 单窗口启动状态机、后台严格本地初始化、超时、失败恢复和身份保全 |
+| 统一展示 | `src/presentation.rs` | 产品名称、完整展示文案、署名、构建信息、来源与许可常量 |
+| 运行策略 | `src/runtime.rs` | `NSWT_OFFLINE=1` 策略与 HTTP 入口的统一拒绝检查 |
 | CLI | `src/cli/mod.rs`、`cmds.rs` | 参数与子命令分发、输出和退出码；复用核心业务 |
 | 业务/API | `src/api/`、`src/crypto/` | 数据结构、会话、配置、网络接口和协议；本次不执行真实账户写入 |
 | 本地数据 | `src/template.rs`、`src/track/` | GPX/JSON 读取、轨迹和统计处理 |
@@ -49,6 +55,8 @@ GUI 的现有异步模型是后台线程与消息通道，不需要引入新的�
 
 身份首次写入采用同目录暂存、同步并以硬链接无覆盖发布，再读回实际获胜身份，防止两个程序同时首次启动生成不同身份。普通 JSON 更新采用同步暂存与原子替换；Unix 新建私有状态文件使用 `0600` 权限。APFS/NTFS 可支持此身份发布方式；不支持硬链接的自定义文件系统将显式报错，不降级覆盖已有身份。并发一致性与文件权限属于本次修改后测试范围，结果以测试日志为准。
 
-## 本次验证边界
+## 本次验证结果与边界
 
-原始 Mac GUI/CLI 构建和 workspace 测试已有日志。定制后编译、真实 GUI、Windows MSVC、ZIP 及实机验收状态分别见其他五份报告。线上账户写入不在本次验证范围内。
+修改前 Mac GUI/CLI 基线先行完成。修改后 locked 检查、测试、release 构建均通过：GUI 主库 204、CLI 主库 136，均另有路由库 8 与集成 7。GUI/CLI 两个实际程序各通过 30 项本地、离线和 loopback Mock 子进程验证。真实 Mac 窗口已观察启动展示、中文、九页切换、输入、本地地图导入与正常退出。
+
+前三轮 Windows Actions 依次失败于 API-set 物理 DLL 误检、固定许可源 CRLF hash mismatch、Windows Server 2022 缺少 OpenGL 2.0+ context。修复提交 `36eeab7405f0e6f72d4faaa2fd73b509b274e84d` 只让工作流对最后一种精确环境限制记录 `GUI smoke unavailable`，不记为通过，其他失败仍阻断构建和上传。第四轮 `42496483831` 构建成功并上传 artifact；ZIP/EXE、PE x64、版本资源、静态 CRT、533 份许可及 538 项内部哈希已独立核验。GUI context 受限，Windows 10/11 实机桌面验收仍待完成。Mac 的测试工具曾在退出后自动重启且未继承离线环境，已立即停止并修复测试启动器；因此不把所有启动描述为从未联网，详细范围见 Mac_Deployment_Report.md。未使用真实账户执行运动记录提交或其他线上账户写入，未创建公开 Release。
