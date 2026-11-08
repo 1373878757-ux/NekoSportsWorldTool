@@ -1,4 +1,4 @@
-//! NekoSportsWorldTool：无参数启动 GUI，带子命令进入 CLI（青龙等定时任务用）。
+//! 无参数启动 GUI，带子命令进入 CLI（青龙等定时任务用）。
 //! full 构建（默认）含 GUI + CLI；`--no-default-features` 仅 CLI。
 
 use nekosportsworldtool::cli;

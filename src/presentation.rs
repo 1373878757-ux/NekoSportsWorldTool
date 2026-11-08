@@ -35,7 +35,7 @@ mod tests {
     #[test]
     fn gui_files_do_not_duplicate_the_approved_presentation_literals() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut sources = vec![root.join("src/main.rs")];
+        let mut sources = vec![root.join("src/main.rs"), root.join("src/android.rs")];
         for entry in std::fs::read_dir(root.join("src/ui")).unwrap() {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|extension| extension == "rs") {
@@ -44,6 +44,11 @@ mod tests {
         }
         for path in sources {
             let source = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !source.contains(APP_NAME),
+                "{} duplicates APP_NAME",
+                path.display()
+            );
             assert!(
                 !source.contains(TAGLINE),
                 "{} duplicates TAGLINE",
