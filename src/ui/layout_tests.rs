@@ -1,4 +1,5 @@
 use super::*;
+use crate::presentation::STATUS_BAR_CREDIT;
 use egui::{Event, PointerButton, Pos2, Rect, Vec2};
 
 #[path = "route_refresh_tests.rs"]
@@ -81,6 +82,28 @@ fn scroll_to_label(app: &mut App, ctx: &egui::Context, w: f32, h: f32, label: &s
         }
     }
     panic!("outer scroll cannot reach {label} at {w}x{h}");
+}
+
+#[test]
+fn status_bar_uses_the_custom_credit_without_replacing_about_attribution() {
+    let ctx = egui::Context::default();
+    let mut app = App::from_state(
+        &ctx,
+        HeaderIdentity::default(),
+        Session::default(),
+        Config::default(),
+    );
+    let _ = frame(&mut app, &ctx, 880.0, 720.0, vec![]);
+    let output = frame(&mut app, &ctx, 880.0, 720.0, vec![]);
+    assert!(output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == STATUS_BAR_CREDIT)
+    }));
+    assert!(
+        !output.shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "Powered by")
+        }),
+        "the old split status-bar credit must not remain"
+    );
 }
 
 #[test]

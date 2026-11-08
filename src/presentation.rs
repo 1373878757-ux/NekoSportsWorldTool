@@ -4,6 +4,7 @@
 pub const APP_NAME: &str = "NekoSportsWorldTool";
 pub const TAGLINE: &str = "just callme...";
 pub const SIGNATURE: &str = "prod.by 田宸宇 J Claude";
+pub const STATUS_BAR_CREDIT: &str = "Powered by J Claude";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const UPSTREAM_AUTHOR: &str = "YanamiNeko";
 pub const UPSTREAM_REPOSITORY: &str = "YanamiNeko/NekoSportsWorldTool";
@@ -28,6 +29,7 @@ mod tests {
         assert_eq!(APP_NAME, "NekoSportsWorldTool");
         assert_eq!(TAGLINE, "just callme...");
         assert_eq!(SIGNATURE, "prod.by 田宸宇 J Claude");
+        assert_eq!(STATUS_BAR_CREDIT, "Powered by J Claude");
         assert_eq!(SIGNATURE.matches("田宸宇").count(), 1);
         assert!(!SIGNATURE.contains("J claude"));
     }
@@ -57,6 +59,11 @@ mod tests {
             assert!(
                 !source.contains(SIGNATURE),
                 "{} duplicates SIGNATURE",
+                path.display()
+            );
+            assert!(
+                !source.contains(STATUS_BAR_CREDIT),
+                "{} duplicates STATUS_BAR_CREDIT",
                 path.display()
             );
         }

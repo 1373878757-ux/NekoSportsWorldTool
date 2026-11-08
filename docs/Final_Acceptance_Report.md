@@ -2,7 +2,7 @@
 
 ## 状态说明
 
-2026-11-09：原始基线、功能实施、Mac 自动化与离线真实 GUI 验证已完成；源码已推送现有 Fork 开发分支。Windows 第六次 Actions Run `42500313727` 成功构建、上传并独立核验 ZIP。Runner 的 GUI smoke 因缺少 OpenGL 2.0+ context 记录为 unavailable，不算 GUI 通过；Windows 10/11 实机显示仍待验。六次 Actions 的历次结果与修正历史、下载包哈希均记录在本报告和 Windows Build Report。
+2026-11-09：在既有 `0.3.1` 基础上完成启动动画和状态栏文案 UI 增量；运动业务逻辑、用户数据目录和发布边界未改变。源码已推送现有 Fork 开发分支。Windows 新构建将在本次源码推送后由 Actions 重新执行；Windows 10/11 实机显示仍待验。既有六次 Actions 的历次结果与修正历史、旧产物哈希仍记录在 Windows Build Report；本次新 Run 和新 ZIP 将在构建完成后补入。
 
 - 工程：`/Users/mac/Developer/NekoSportsWorldTool`
 - 版本：`0.3.1`
@@ -20,6 +20,7 @@
 - Windows 第六轮 Actions：<https://github.com/1373878757-ux/NekoSportsWorldTool/actions/runs/42500313727>（success；GUI smoke 明确记为 unavailable）
 - Windows ZIP：[NekoSportsWorldTool-J-claude-Windows-x64.zip](</Users/mac/Desktop/run fasting/artifacts/windows-run-42500313727/NekoSportsWorldTool-J-claude-Windows-x64/NekoSportsWorldTool-J-claude-Windows-x64.zip>)；SHA-256 `e98282e8c4ac456e3ea6e287b65114047de1b03849e1fe7a72c9c80f0e5e7817`
 - Windows EXE SHA-256：`422fa5f4204f3a759544c287814e85a42d4b24627348ca3466eaebc244162512`
+- 本次 UI 增量：Splash 最短展示 `3500 ms`、成功淡出 `400 ms`、真实时间轴阶段测试；状态栏 `Powered by J Claude`
 
 ## 已完成并有证据
 
@@ -34,6 +35,7 @@
 - 第一轮真实 Mac GUI 已观察启动页、完整中文署名、原名称窗口标题、About 归属、九页切换、输入、本地合成 OSM 导入和 Cmd+Q 退出 0。
 - 提交后 Mac GUI 重建的 About 实际显示 `17a7a68b92db`；重启身份保全、窗口调整、损坏合成文件保留与修复后重试、正常退出均已验证，并记录了 20 秒空闲 CPU/socket 观察。
 - 2026-11-09 再次通过 CUA 检查最终 GUI 二进制的实际运行窗口：标题为 `NekoSportsWorldTool`，离线提示可见、账号未登录；进程环境为 `NSWT_OFFLINE=1` 和 `/tmp/nswt-final-gui-20261109`。详情见 `gui/final-current-run.json`。本次检查观察主窗口，没有重新采集启动页截图。
+- 本次 UI 增量的 release 二进制已在本机离线 `.app` 中实际启动：CUA 首屏观察到深色背景与 `just callme...`，随后进入主窗口；主窗口真实显示 `Powered by J Claude`，标题仍为 `NekoSportsWorldTool`，离线提示和未登录状态保持不变。确定性测试覆盖完整 3500 ms 时间轴与 400 ms 淡出；CLI `--help` 和 `--version` 仍不展示 Splash。
 - Windows 目标第三方许可收集实跑通过：262 包、533 份许可/来源文件，连同索引共 534 个文件。
 
 证据根：`/Users/mac/Desktop/run fasting/verification`。

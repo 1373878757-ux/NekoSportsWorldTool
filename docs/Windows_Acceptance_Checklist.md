@@ -17,6 +17,8 @@
 
 ## 启动与展示
 
+本次 UI 增量将启动最短展示调整为 3500 ms、成功淡出约 400 ms，并将状态栏改为 `Powered by J Claude`。以下 Windows 项仍需 Windows 10/11 实机执行；Actions 构建成功不等价于图形实机通过。
+
 - [ ] Windows 10 x64：完整解压后双击 EXE 正常启动，无缺失 DLL 或崩溃。
 - [ ] Windows 11 x64：完整解压后双击 EXE 正常启动，无缺失 DLL 或崩溃。
 - [ ] 启动页中央精确显示 `just callme...`。

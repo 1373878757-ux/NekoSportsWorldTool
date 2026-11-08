@@ -19,7 +19,7 @@ prod.by 田宸宇 J Claude
 
 ## 启动与视觉
 
-采用现有 egui/eframe 单窗口。启动状态为本地初始化、淡出、主界面；失败提供错误说明、重试和退出。最短展示 800 ms，文案淡入约 400 ms，成功淡出约 250 ms；本地初始化超时 30 秒显示错误状态。更新/IP/账户刷新不作为进入主界面的前提。
+采用现有 egui/eframe 单窗口。启动状态为本地初始化、淡出、主界面；失败提供错误说明、重试和退出。0.3.1 UI 增量将最短展示调整为 3500 ms、成功淡出约 400 ms：标题在 0–1200 ms ease-out 渐入并上浮 8 px，线条在 1200–2000 ms 从中心展开至 120 px，2000 ms 起连续移动高光，署名在 2500–3200 ms 渐入，背景仅使用低透明度径向呼吸光晕。初始化未完成或失败时不会因时间单独进入主界面；失败信息在完整启动展示后进入错误页。本地初始化超时 30 秒显示错误状态。动画使用真实 `Duration` 计算、约 30 fps 请求重绘，不阻塞 GUI 主线程；更新/IP/账户刷新不作为进入主界面的前提。
 
 默认深色体系：背景 `#0B0D12`、主文字 `#F5F5F7`、次文字 `#9CA3AF`、强调色 `#8B9EFF`、分割线 `#262A35`。统一控件和地图语义色，保留页面布局、功能和路线区分。中文由已许可 Noto Sans SC 回退保障。
 
@@ -27,7 +27,7 @@ prod.by 田宸宇 J Claude
 
 `src/presentation.rs` 为实际统一常量模块。2026-11-08 的 `verification/local/gui-tests.log` 已通过 `presentation_text_matches_the_approved_spelling_exactly` 与 `gui_files_do_not_duplicate_the_approved_presentation_literals`，检查大小写、空格、三个 ASCII 点号和 GUI 文件禁止重复硬编码。
 
-同次测试已通过中文完整署名字形覆盖、启动最短展示和淡出、失败/超时/重试、启动期间主窗口交互隔离，以及小窗口/HiDPI 的展示文案和边界测试。
+同次测试已通过中文完整署名字形覆盖、3500 ms 最短展示和 400 ms 淡出时间轴、标题/线条/署名阶段、失败/超时/重试、启动期间主窗口交互隔离，以及小窗口/HiDPI 的展示文案和边界测试。主界面状态栏的展示常量现为 `Powered by J Claude`；About 仍保留 YanamiNeko、ConCosew、原仓库、CC BY-NC 4.0 和定制说明。
 
 真实 Mac 观测已有 `verification/gui/splash-slow-initialization.jpg`：中央和底部位置、两行精确文案、中文署名及原产品窗口标题正常。`about-offline.jpg` 显示相同常量署名以及原作者、来源、CC BY-NC 4.0 和字体归属。`main-offline.jpg` 与 `local-map-loaded.jpg` 记录深色主界面和实际本地地图导入；未出现独立 J Claude 标题或 JC 字标。
 

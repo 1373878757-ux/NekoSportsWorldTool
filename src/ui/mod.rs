@@ -30,6 +30,7 @@ pub mod user;
 #[cfg(test)]
 use crate::api::model;
 use crate::api::model::{Config, HeaderIdentity, Session};
+use crate::presentation::STATUS_BAR_CREDIT;
 use eframe::egui;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
@@ -369,13 +370,13 @@ impl App {
                 ui.separator();
                 ui.label(&self.status);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // 超链接但不用链接样式，纯文本观感
-                    theme::external_link(
-                        ui,
-                        egui::RichText::new("YanamiNeko").color(theme::text_dim()),
-                        "https://github.com/YanamiNeko",
+                    ui.add_sized(
+                        [116.0, ui.available_height()],
+                        egui::Label::new(
+                            egui::RichText::new(STATUS_BAR_CREDIT).color(theme::text_dim()),
+                        )
+                        .halign(egui::Align::LEFT),
                     );
-                    ui.label(egui::RichText::new("Powered by").color(theme::text_dim()));
                     ui.separator();
                     if ui
                         .add_enabled(

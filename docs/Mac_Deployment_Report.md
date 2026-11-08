@@ -55,7 +55,7 @@
 | `python3 scripts/verify_local.py --binary target-cli/release/nekosportsworldtool --output <独立证据目录>` | 30 项通过，`cli-cli-smoke/cli-smoke.json`；只使用临时文件和 loopback Mock |
 | `python3 scripts/verify_local.py --binary target/release/nekosportsworldtool --output <独立证据目录>` | GUI 完整构建的 CLI 入口同样 30 项通过，`gui-cli-smoke/cli-smoke.json`；带参数不启动 GUI |
 
-自动化覆盖精确署名常量与 GUI 禁止重复硬编码、中文字体字形、启动最短展示/失败/超时/重试/交互隔离、小窗口及 HiDPI 绘制、损坏配置保留、迁移原字节与上传回执保全、并发首次身份一致性、离线 HTTP 拒绝和定制更新源筛选。CLI 的 help/version/未知命令、本地 GPX/JSON、中文空格路径、离线命令阻止和更新确认/错误分支均有真实子进程记录；未创建账户数据、下载更新或替换可执行文件。
+自动化覆盖精确署名常量与 GUI 禁止重复硬编码、状态栏 `Powered by J Claude` 精确文案、中文字体字形、3500 ms 启动最短展示/400 ms 淡出/失败/超时/重试/交互隔离、小窗口及 HiDPI 绘制、损坏配置保留、迁移原字节与上传回执保全、并发首次身份一致性、离线 HTTP 拒绝和定制更新源筛选。CLI 的 help/version/未知命令、本地 GPX/JSON、中文空格路径、离线命令阻止和更新确认/错误分支均有真实子进程记录；未创建账户数据、下载更新或替换可执行文件。
 
 ## 真实 Mac GUI：已执行部分
 
@@ -66,6 +66,8 @@
 | 实际操作 / 观察 | 结果与证据 |
 |---|---|
 | 慢初始化启动页 | 中央 `just callme...`、底部 `prod.by 田宸宇 J Claude`、窗口标题正确，`gui/splash-slow-initialization.jpg` |
+| 启动动画增量（当前源码） | 3500 ms 最短展示；标题 0–1200 ms，线条 1200–2000 ms，流动高光 2000 ms 起，署名 2500–3200 ms，成功淡出 400 ms；`src/ui/startup.rs` 时间轴测试 |
+| 状态栏定制文案（当前源码） | 右侧显示 `Powered by J Claude`；About 仍显示原作者、来源、许可证和定制说明；`src/presentation.rs`、`src/ui/layout_tests.rs` |
 | 主窗口与中文 | 深色主窗口、离线提示、中文标签正常，`gui/main-offline.jpg` |
 | About | 两行署名、原作者、来源、非商业许可、字体说明与独立数据目录可见，`gui/about-offline.jpg` |
 | 页面与输入操作 | 九页均实际切换；键盘输入合成文本 `offline-test`；本地“换一版”操作已执行，未登录真实账户 |

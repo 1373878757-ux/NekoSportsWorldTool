@@ -6,9 +6,80 @@ use eframe::egui;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
-const MIN_DISPLAY: Duration = Duration::from_millis(800);
-const FADE_DURATION: Duration = Duration::from_millis(250);
+// All animation timing and geometry are logical points, independent of frame rate/DPI.
+const SPLASH_MIN_DURATION_MS: u64 = 3500;
+const SPLASH_FADE_OUT_MS: u64 = 400;
+const SPLASH_TITLE_FADE_MS: u64 = 1200;
+const SPLASH_LINE_DELAY_MS: u64 = 1200;
+const SPLASH_LINE_EXPAND_MS: u64 = 800;
+const SPLASH_HIGHLIGHT_DELAY_MS: u64 = 2000;
+const SPLASH_HIGHLIGHT_PERIOD_MS: u64 = 4000;
+const SPLASH_CREDIT_DELAY_MS: u64 = 2500;
+const SPLASH_CREDIT_FADE_MS: u64 = 700;
+const SPLASH_BREATH_PERIOD_MS: u64 = 6000;
+const SPLASH_TITLE_RISE: f32 = 8.0;
+const SPLASH_LINE_WIDTH: f32 = 120.0;
+const SPLASH_LINE_HEIGHT: f32 = 1.5;
+const SPLASH_REPAINT: Duration = Duration::from_millis(33);
+const MIN_DISPLAY: Duration = Duration::from_millis(SPLASH_MIN_DURATION_MS);
+const FADE_DURATION: Duration = Duration::from_millis(SPLASH_FADE_OUT_MS);
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Copy)]
+struct AnimationFrame {
+    title_opacity: f32,
+    title_offset_y: f32,
+    line_progress: f32,
+    highlight_opacity: f32,
+    highlight_position: f32,
+    credit_opacity: f32,
+    background_glow: f32,
+}
+
+impl AnimationFrame {
+    /// The caller supplies elapsed wall time so tests can advance a controlled clock.
+    fn at(elapsed: Duration) -> Self {
+        let title = ease_out(progress(elapsed, 0, SPLASH_TITLE_FADE_MS));
+        let highlight_time = elapsed
+            .saturating_sub(Duration::from_millis(SPLASH_HIGHLIGHT_DELAY_MS))
+            .as_secs_f64();
+        let highlight_phase = highlight_time
+            / Duration::from_millis(SPLASH_HIGHLIGHT_PERIOD_MS).as_secs_f64()
+            * std::f64::consts::TAU;
+        let breath_phase = elapsed.as_secs_f64()
+            / Duration::from_millis(SPLASH_BREATH_PERIOD_MS).as_secs_f64()
+            * std::f64::consts::TAU;
+        Self {
+            title_opacity: title,
+            title_offset_y: (1.0 - title) * SPLASH_TITLE_RISE,
+            line_progress: smooth(progress(
+                elapsed,
+                SPLASH_LINE_DELAY_MS,
+                SPLASH_LINE_EXPAND_MS,
+            )),
+            highlight_opacity: smooth(progress(elapsed, SPLASH_HIGHLIGHT_DELAY_MS, 500)),
+            highlight_position: ((1.0 - highlight_phase.cos()) * 0.5) as f32,
+            credit_opacity: smooth(progress(
+                elapsed,
+                SPLASH_CREDIT_DELAY_MS,
+                SPLASH_CREDIT_FADE_MS,
+            )),
+            background_glow: 0.018 + ((1.0 - breath_phase.cos()) * 0.5) as f32 * 0.012,
+        }
+    }
+}
+
+fn progress(elapsed: Duration, delay_ms: u64, duration_ms: u64) -> f32 {
+    (elapsed
+        .saturating_sub(Duration::from_millis(delay_ms))
+        .as_secs_f32()
+        / Duration::from_millis(duration_ms).as_secs_f32())
+    .clamp(0.0, 1.0)
+}
+
+fn ease_out(value: f32) -> f32 {
+    1.0 - (1.0 - value.clamp(0.0, 1.0)).powi(3)
+}
 
 #[derive(Default)]
 struct Timeline {
@@ -121,6 +192,10 @@ impl DesktopApp {
         }
     }
 
+    fn error_visible_at(&self, elapsed: Duration) -> bool {
+        self.error.is_some() && elapsed >= MIN_DISPLAY
+    }
+
     fn draw_error(&mut self, ctx: &egui::Context) {
         let mut retry = false;
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -166,11 +241,11 @@ impl eframe::App for DesktopApp {
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.poll_initialization(ctx);
-        if self.error.is_some() {
+        let elapsed = self.started.elapsed();
+        if self.error_visible_at(elapsed) {
             self.draw_error(ctx);
             return;
         }
-        let elapsed = self.started.elapsed();
         let opacity = self.timeline.opacity(elapsed, self.app.is_some());
         if let Some(app) = &mut self.app {
             app.interactive = opacity.is_none();
@@ -187,13 +262,14 @@ impl eframe::App for DesktopApp {
         }
         if let Some(opacity) = opacity {
             draw_presentation(ctx, elapsed, opacity);
-            ctx.request_repaint_after(Duration::from_millis(16));
+            ctx.request_repaint_after(SPLASH_REPAINT);
         }
     }
 }
 
 fn draw_presentation(ctx: &egui::Context, elapsed: Duration, opacity: f32) {
     let rect = ctx.screen_rect();
+    let animation = AnimationFrame::at(elapsed);
     // The foreground area intercepts input while the main UI fades in behind it.
     egui::Area::new(egui::Id::new("startup_presentation"))
         .order(egui::Order::Foreground)
@@ -203,37 +279,88 @@ fn draw_presentation(ctx: &egui::Context, elapsed: Duration, opacity: f32) {
             let (rect, _) = ui.allocate_exact_size(rect.size(), egui::Sense::click_and_drag());
             let painter = ui.painter();
             painter.rect_filled(rect, 0.0, theme::background().gamma_multiply(opacity));
-            let seconds = elapsed.as_secs_f32();
-            let appear = smooth(seconds / 0.4) * opacity;
             let center = rect.center() - egui::vec2(0.0, 12.0);
+            draw_background_glow(painter, rect, animation.background_glow * opacity);
             let font_size = (rect.width() / 9.0).clamp(24.0, 46.0);
             painter.text(
-                center + egui::vec2(0.0, (1.0 - smooth(seconds / 0.4)) * 5.0),
+                center + egui::vec2(0.0, animation.title_offset_y),
                 egui::Align2::CENTER_CENTER,
                 TAGLINE,
                 egui::FontId::proportional(font_size),
-                theme::text().gamma_multiply(appear),
+                theme::text().gamma_multiply(animation.title_opacity * opacity),
             );
-            let line = egui::Rect::from_center_size(
-                center + egui::vec2(0.0, 52.0),
-                egui::vec2(108.0, 2.0),
-            );
-            painter.rect_filled(line, 1.0, theme::border().gamma_multiply(appear));
-            let position = (seconds * 1.4).sin() * 0.5 + 0.5;
-            let left = line.left() + position * (line.width() - 30.0);
-            painter.rect_filled(
-                egui::Rect::from_min_size(egui::pos2(left, line.top()), egui::vec2(30.0, 2.0)),
-                1.0,
-                theme::accent().gamma_multiply(appear),
-            );
+            draw_loading_line(painter, center + egui::vec2(0.0, 52.0), animation, opacity);
             painter.text(
                 egui::pos2(rect.center().x, rect.bottom() - 30.0),
                 egui::Align2::CENTER_CENTER,
                 SIGNATURE,
                 egui::FontId::proportional((rect.width() / 29.0).clamp(10.0, 13.0)),
-                theme::text_dim().gamma_multiply(smooth((seconds - 0.1) / 0.3) * opacity),
+                theme::text_dim().gamma_multiply(animation.credit_opacity * opacity),
             );
         });
+}
+
+fn draw_background_glow(painter: &egui::Painter, rect: egui::Rect, opacity: f32) {
+    // A small radial mesh gives a soft gradient without particles or new textures.
+    const SEGMENTS: u32 = 48;
+    let radius = rect.width().min(rect.height()) * 0.48;
+    let center = rect.center();
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(center, theme::accent().gamma_multiply(opacity));
+    for index in 0..SEGMENTS {
+        let angle = index as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        mesh.colored_vertex(
+            center + egui::vec2(angle.cos(), angle.sin()) * radius,
+            egui::Color32::TRANSPARENT,
+        );
+        mesh.add_triangle(0, index + 1, (index + 1) % SEGMENTS + 1);
+    }
+    painter.add(mesh);
+}
+
+fn draw_loading_line(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    animation: AnimationFrame,
+    opacity: f32,
+) {
+    if animation.line_progress <= 0.0 {
+        return;
+    }
+    let line = egui::Rect::from_center_size(
+        center,
+        egui::vec2(
+            SPLASH_LINE_WIDTH * animation.line_progress,
+            SPLASH_LINE_HEIGHT,
+        ),
+    );
+    for (spread, alpha) in [(4.0, 0.025), (2.0, 0.045)] {
+        painter.rect_filled(
+            line.expand(spread),
+            spread + 1.0,
+            theme::accent().gamma_multiply(alpha * opacity),
+        );
+    }
+    painter.rect_filled(line, 1.0, theme::border().gamma_multiply(0.9 * opacity));
+    painter.rect_filled(line, 1.0, theme::accent().gamma_multiply(0.62 * opacity));
+
+    let highlight_center = egui::lerp(line.x_range(), animation.highlight_position);
+    let mut mesh = egui::Mesh::default();
+    const STEPS: u32 = 24;
+    for index in 0..=STEPS {
+        let x = egui::lerp(line.x_range(), index as f32 / STEPS as f32);
+        let distance = ((x - highlight_center) / 24.0).abs().min(1.0);
+        let alpha = (1.0 - smooth(distance)) * animation.highlight_opacity * opacity * 0.7;
+        let color = egui::Color32::WHITE.gamma_multiply(alpha);
+        mesh.colored_vertex(egui::pos2(x, line.top()), color);
+        mesh.colored_vertex(egui::pos2(x, line.bottom()), color);
+        if index > 0 {
+            let base = index * 2;
+            mesh.add_triangle(base - 2, base - 1, base);
+            mesh.add_triangle(base, base - 1, base + 1);
+        }
+    }
+    painter.add(mesh);
 }
 
 #[cfg(test)]
@@ -241,28 +368,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn successful_initialization_still_observes_minimum_and_fade() {
+    fn successful_initialization_observes_animation_minimum_and_fade() {
         let mut timeline = Timeline::default();
         assert_eq!(
             timeline.opacity(Duration::from_millis(100), true),
             Some(1.0)
         );
         assert_eq!(timeline.opacity(MIN_DISPLAY, true), Some(1.0));
-        assert_eq!(
-            timeline.opacity(Duration::from_millis(925), true),
-            Some(0.5)
-        );
-        assert_eq!(timeline.opacity(Duration::from_millis(1050), true), None);
+        assert!(timeline.opacity(Duration::from_millis(3501), true).unwrap() > 0.99);
+        assert!(timeline.opacity(Duration::from_millis(3899), true).unwrap() < 0.001);
+        assert_eq!(timeline.opacity(Duration::from_millis(3900), true), None);
     }
 
     #[test]
-    fn slow_or_failed_initialization_never_advances_by_time_alone() {
+    fn animation_timeline_uses_wall_time_for_each_stage() {
+        let initial = AnimationFrame::at(Duration::ZERO);
+        assert_eq!(initial.title_opacity, 0.0);
+        assert_eq!(initial.title_offset_y, SPLASH_TITLE_RISE);
+        assert_eq!(initial.line_progress, 0.0);
+        assert_eq!(initial.credit_opacity, 0.0);
+
+        let title_done = AnimationFrame::at(Duration::from_millis(SPLASH_TITLE_FADE_MS));
+        assert!((title_done.title_opacity - 1.0).abs() < f32::EPSILON);
+        assert_eq!(title_done.title_offset_y, 0.0);
+
+        let line_start = AnimationFrame::at(Duration::from_millis(SPLASH_LINE_DELAY_MS));
+        assert_eq!(line_start.line_progress, 0.0);
+        let line_done = AnimationFrame::at(Duration::from_millis(
+            SPLASH_LINE_DELAY_MS + SPLASH_LINE_EXPAND_MS,
+        ));
+        assert!((line_done.line_progress - 1.0).abs() < f32::EPSILON);
+        let highlight_started = AnimationFrame::at(Duration::from_millis(2200));
+        assert!(highlight_started.highlight_opacity > 0.0);
+
+        let credit_start = AnimationFrame::at(Duration::from_millis(SPLASH_CREDIT_DELAY_MS));
+        assert_eq!(credit_start.credit_opacity, 0.0);
+        let credit_done = AnimationFrame::at(Duration::from_millis(
+            SPLASH_CREDIT_DELAY_MS + SPLASH_CREDIT_FADE_MS,
+        ));
+        assert!((credit_done.credit_opacity - 1.0).abs() < f32::EPSILON);
+        assert!(credit_done.background_glow >= 0.018);
+    }
+
+    #[test]
+    fn slow_or_failed_initialization_never_advances_to_success_by_time_alone() {
         let mut timeline = Timeline::default();
         assert_eq!(timeline.opacity(Duration::from_secs(60), false), Some(1.0));
         assert_eq!(timeline.opacity(Duration::from_secs(61), true), Some(1.0));
-        assert_eq!(timeline.opacity(Duration::from_millis(61250), true), None);
+        assert_eq!(timeline.opacity(Duration::from_millis(61400), true), None);
         let mut retry = Timeline::default();
         assert_eq!(retry.opacity(Duration::ZERO, false), Some(1.0));
+    }
+
+    #[test]
+    fn failed_initialization_waits_for_the_complete_splash_before_error_page() {
+        let mut desktop = pending_app(mpsc::channel().1);
+        desktop.error = Some("fixture directory is read-only".to_owned());
+        assert!(!desktop.error_visible_at(Duration::from_millis(3499)));
+        assert!(desktop.error_visible_at(MIN_DISPLAY));
     }
 
     fn pending_app(receiver: Receiver<InitResult>) -> DesktopApp {
