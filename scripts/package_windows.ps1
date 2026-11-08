@@ -34,6 +34,8 @@ $dlls = @($dependencyOutput | ForEach-Object { if ($_ -match '^\s+([A-Za-z0-9_.-
 if ($dlls.Count -eq 0) { throw "No Windows system imports found" }
 if ($dlls | Where-Object { $_ -match '^(VCRUNTIME|MSVCP|CONCRT|MSVCR)\d' }) { throw "Unexpected dynamically linked VC runtime" }
 foreach ($dll in $dlls) {
+    # API-set contracts are resolved by the Windows loader and need no same-named disk file.
+    if ($dll -match '^(api|ext)-ms-win-[a-z0-9-]+-l\d+-\d+-\d+\.dll$') { continue }
     if (-not (Test-Path -LiteralPath (Join-Path $env:WINDIR "System32/$dll"))) { throw "Non-system DLL requires explicit packaging: $dll" }
 }
 $signatureStatus = (Get-AuthenticodeSignature -LiteralPath $binaryPath).Status.ToString()

@@ -453,8 +453,7 @@ fn manual_osm_button_loads_without_login_and_draws_roads_with_visible_status() {
             );
             drawn |= out.shapes.iter().any(|shape| match &shape.shape {
                 egui::Shape::Path(p) => {
-                    p.stroke.color
-                        == egui::epaint::ColorMode::Solid(theme::road())
+                    p.stroke.color == egui::epaint::ColorMode::Solid(theme::road())
                         && p.points
                             .iter()
                             .any(|point| shape.clip_rect.contains(*point))

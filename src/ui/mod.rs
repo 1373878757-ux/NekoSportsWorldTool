@@ -379,8 +379,9 @@ impl App {
                     ui.separator();
                     if ui
                         .add_enabled(
-                            !crate::runtime::offline()
-                                && !(self.update.checking || self.update.downloading),
+                            !(crate::runtime::offline()
+                                || self.update.checking
+                                || self.update.downloading),
                             egui::Button::new(
                                 egui::RichText::new("检查更新")
                                     .small()
