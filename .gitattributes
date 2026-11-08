@@ -1,0 +1,2 @@
+# Preserve pinned upstream license bytes for SHA-256 verification on every OS.
+/scripts/license_sources/** -text
