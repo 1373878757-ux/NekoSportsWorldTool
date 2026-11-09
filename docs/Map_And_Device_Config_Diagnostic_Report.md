@@ -1,93 +1,120 @@
 # 地图加载与设备定位配置诊断报告
 
-日期：2026-11-09。版本：0.3.1。源码：用户 Fork `1373878757-ux/NekoSportsWorldTool`，分支 `feature/j-claude-cross-platform`。本轮基线：`44e377e91bed4dbc39f2e4b8ec2c709bc4360352`。
+日期：2026-11-09。版本：0.3.1。源码来源：用户 Fork `1373878757-ux/NekoSportsWorldTool`，分支 `feature/j-claude-cross-platform`。原始基线：`44e377e91bed4dbc39f2e4b8ec2c709bc4360352`；首轮诊断实现：`8f1a0753b91975c2968ed3cccdf06884b84550b7`；本轮地图解耦与配置状态实现：`79a895668d49e97214fa57fdb5ccec7587b37c11`；最终构建源码：`4c60231899ede1dfd0c45411fd63453d272878cc`。
 
 ## 结论与证据边界
 
-这是两个独立问题。HTTP 502 发生在公共 Overpass HTTP 请求阶段；“学校围栏内没有可用道路”发生在成功下载、解析、WGS84→BD-09 对齐之后的围栏裁剪阶段。一次失败的 HTTP 请求不会继续解析或裁剪。没有真实校区边界与对应成功 OSM 响应的配对样本，不能认定具体学校缺路、坐标转换有缺陷或裁剪算法错误。
+HTTP 502 与“学校围栏内没有可用道路”是不同阶段的问题。502 发生在匿名 Overpass HTTP 请求阶段，表示服务器或中间网关未成功处理请求；失败响应不会继续解析或裁剪。围栏裁剪为空发生在成功下载、解析、构图及 WGS84→BD-09 对齐以后。缺少实际学校边界与同次成功 OSM 响应的配对样本，仍不能判定具体学校缺路、坐标转换错误或裁剪算法有缺陷。
 
-设备页的编辑缓冲区和运行时身份分别是 `device_buf` 与 `identity`；原有实现已经在 `identity.json` 保存成功后同步运行时身份。没有发现“保存成功但运行时仍读旧值”的直接证据。前序诊断记录里的“哈尔滨市 + 38.901678, 121.540241”仍包含内置大连锚点，因此会被原有运行前检查拒绝；改城市名称不会自动移动坐标。
+用户截图及本次获授权查看的实际设备页中，编辑区与“当前生效身份”均显示相同城市和内置大连默认锚点，支持“默认值残留”这一判断，不支持“保存成功但运行时读取旧值”的结论。旧配置缺少锚点字段时，serde 仍按原约定补默认锚点；本轮通过迁移、保存与重载测试核对这一行为，未自动改写真实配置或推测所在地。
 
-用户明确表示测试账号由本人负责，并要求停止 Mac 本地测试。本轮不代为登录、不发起真实账号跑步流程、不访问线上运动写入；Mac 只执行静态检查及构建。自动化测试由现有 Windows Actions 执行。正式 Mac GUI、真实校区定位和在线接口验证由用户完成，不能用编译结果代替。
+按用户指示，本轮停止 Mac 本地自动化测试，测试账号与登录由用户负责。随后用户对“手动刷新一次地图并读取道路日志”明确回复“你自己操作”，因此代理仅在已登录的旧构建窗口执行一次获授权地图刷新和只读诊断，并恢复原地图来源及算法选择。没有登录、改定位、启动跑步或提交运动记录。最终新构建未运行 Mac GUI/CLI 或单元测试；自动化测试由 Windows Actions 在合成数据与 loopback HTTP 环境执行。
 
-## 实际源码与调用流程
+## 已获授权的 Mac 在线诊断
 
-- `src/ui/device.rs`：编辑缓冲区→点击保存→`api::model::save_identity`→保存成功后更新 `identity`。撤销修改从已保存运行时身份恢复。
-- `src/api/model.rs`：`identity.json` 的读写复用原有持久化。默认数据根由 `src/platform.rs` 提供；本轮没有改动用户配置文件、缓存或会话。
-- `src/crypto/header.rs`：锚点范围检查和旧大连默认配置拦截；本轮新增统一的问题说明，保留原来的布尔拦截条件。
-- `src/api/flow.rs`：仍在原有实时点位请求位置检查定位配置，仅替换错误提示。登录、预检、点位请求、轨迹生成及提交协议的顺序和行为未调整。
-- `src/api/school_roads.rs`：按当前围栏或合法点位确定范围→匹配学校及范围的 7 天缓存→单次匿名 Overpass 请求→OSM 解析→构图→WGS84/BD-09 对齐副本→围栏裁剪验证→接受缓存。返回给地图的原始图仍为 WGS84。
-- `crates/route-planner/src/load.rs`：原有 highway 筛选、节点连边及建筑解析算法保留，只增加统计字段。道路筛选后的缺失节点引用数在整个 XML 解析完成后计算，避免 ways 先于 nodes 时误报。
+实际操作使用当前正在运行的 `8f1a0753b91975c2968ed3cccdf06884b84550b7` 构建（About 页可核对），不冒充最终 `4c60231` 的 GUI 验收。仅触发一次“自动获取学校路网”。
 
-macOS 与 Windows 共用上述路网代码，没有新增平台专属网络、坐标或裁剪分支。endpoint、45 秒 HTTP 总超时、Overpass 查询 timeout=25、24 MiB 响应上限、7 天路网 TTL、平台点位 300 秒 TTL均保持原值。没有下载或构建原作者仓库源码。
-
-## 本轮最小修改
-
-| 文件 | 修改内容 |
+| 实际观测 | 结果 |
 |---|---|
-| `crates/route-planner/src/load.rs` | 新增 `OsmParseStats`：已解析唯一节点、way、原始 highway way、保留道路 way、未解析道路节点引用计数；不调整道路筛选或构图。 |
-| `src/api/school_roads.rs` | 为 HTTP 请求生成进程内递增 request ID，记录状态码、耗时和响应字节；HTTP 错误正文最多读取 1024 bytes，日志摘要最多 240 个字符并清除控制字符。新增 parse/graph/align/clip/cache 阶段日志。 |
-| `src/road_status.rs` | 分别展示 HTTP 502、OSM 解析失败、构图无道路、围栏裁剪无道路。502 正文包含 timeout 时仍按 HTTP 502 归类。 |
-| `src/crypto/header.rs` | 定位问题集中生成明确提示：城市空、坐标无效、城市已改但锚点仍是大连默认值、城市仍为原默认值。 |
-| `src/ui/device.rs` | 显示待保存、无效和当前保存配置状态；拒绝新修改的不合法定位数据。未修改定位、只修改机型等设备字段时仍允许保存，默认定位继续被运行前检查拒绝。 |
-| `src/api/flow.rs` | 原位置使用统一错误原因，并提示到设备页修改后点击“保存”；不放宽校验、不自动交换经纬度。 |
+| Overpass 请求 | request=1，HTTP 总超时设置 45000 ms，实际 859 ms 返回 HTTP 502。 |
+| 响应摘要 | “This Overpass API server is currently at capacity. All query workers are busy and the request queue is full.” |
+| 失败阶段 | HTTP 下载；同次请求未执行 parse、graph、align、clip，因此不存在可用于归因“裁剪为空”的同次道路计数。 |
+| 现有本地文件 | 原本可读取，恢复后显示 103 节点、216 有向边、31 建筑；仅证明文件能解析，未证明该文件与实际校区对齐。 |
+| 平台点位 | 0 个有效；UI 提示“请配置定位锚点；已有缓存仍可查看”。未以真实用户缓存验证点位保留，不能将 Mock 通过当成真实点位显示通过。 |
+| 围栏 | 已加载 1 个；未修改或重新定义校园边界。 |
+| 配置 | 实际设备页仍为已更改的城市与内置大连锚点；编辑区和当前生效身份一致，没有自动修正。 |
+| 操作结束 | 恢复原 `map.osm` 来源及经典模式；没有主动重复请求公共 API，没有点击“开始跑步”。 |
 
-原有 `.gitignore` 的三行修改、三份未跟踪调查文档均予保留，不纳入本轮源码提交。品牌展示常量、启动动画、账号模块、运动提交与身份请求字段不变。
+本次实际 502 的正文直接指向 Overpass 服务容量或返回该内容的中间网关，并非 Windows 专属兼容性、XML 解析或道路裁剪错误。它不能解释此前另一次“围栏内没有道路”。脱敏证据为 `mac-online-map-diagnostic.json` 与 `.log`；未保存账号、Token、设备标识或公网 IP。
 
-## 如何判读新日志
+## 实际调用流程与平台关系
 
-| 阶段 | 输出 | 可以确认 / 不能据此认定 |
-|---|---|---|
-| `[road:http]` | request ID、HTTP 状态、elapsed_ms；失败正文摘要 | 502 表示 HTTP 服务或网关失败；连接/DNS/TLS/超时会保留底层错误。不能把 502 认作空道路。 |
-| `[road:parse]` | bytes、nodes、ways、highway_ways、retained_road_ways、unresolved_road_node_refs | 区分原始没有 highway、被既有筛选去除、节点引用缺失、XML 错误。nodes 是成功解析且 ID 唯一的节点数。 |
-| `[road:graph]` | crs=WGS84、nodes、edges | 构图成功与否。edge 为有向边，不能直接与 way 数比较。 |
-| `[road:align]` | crs=BD-09、nodes、edges | 对齐副本已经完成。计数不变不等于真实校区坐标已经验收。 |
-| `[road:clip]` | fence_rings、裁剪前后节点与边数 | 无围栏时明确记录 0 且不伪造边界；有围栏且归零时明确报裁剪阶段，根因仍需配对样本。 |
-| `[road:cache]` | 当前作用域缓存命中或解析失败 | 有效缓存命中不请求 Overpass；失败下载及裁剪为空不写入新路网。 |
+- 平台点位与围栏：复用 `src/ui/checkpoint_jobs.rs::load_metadata`、既有平台接口及点位缓存，不重新实现认证、点位请求或缓存存储。
+- 新地图查看：`map_jobs.rs::ensure_map_loaded` → `refresh_map_roads` → 原点位/围栏读取 → 原学校路网加载；地图页不请求跑步 policy，不生成 `PreviewInputs`，不改变 Legacy/Road 选择。
+- 道路：围栏或合法点位确定范围 → 同学校/区域的 7 天缓存 → 单次匿名 Overpass 请求 → 原 XML 解析/筛选/构图 → BD-09 对齐副本 → 原围栏裁剪校验。地图接收的道路图仍为 WGS84。
+- 本地文件：地图页使用有界本地读取和同一 XML 解析器；不依赖登录。成功读取后才更新配置中的来源，失败保留旧来源。查看文件只刷新独立点位/围栏层；既有跑步页刷新策略流程保留。
+- 身份配置：设备页编辑缓冲区 → 本地校验 → 既有 `save_identity` → 保存成功后同步运行时 `identity`。启动加载错误继续由严格 `StartupError` 展示，不静默退回默认值。
 
-没有新增自动重试。每次 downloader 仍只有一次 `send_form`，缓存加载 fetch 仍是 `FnOnce`。UI 取消令牌不能立即中断已经开始的同步 HTTP；切换校区或独立刷新仍可能存在请求重叠。request ID 用于分辨这些请求，不宣称本轮修复了重叠调度。
+macOS 与 Windows 使用同一 Rust 地图、网络、转换和缓存逻辑；本轮没有增加平台专属道路算法。OS 数据目录与系统证书来源仍遵循原实现。Overpass HTTP 总超时 45 秒、查询 timeout=25、24 MiB 上限、道路缓存 7 天、点位缓存 300 秒均保持原值；新增的是公共端点进程内至少 30 秒请求间隔。没有使用原作者仓库下载、更新或构建应用源码。
 
-## 定位配置限制
+## 最小修复与修改文件
 
-输入顺序仍是纬度、经度，内部不会自动交换或自动纠偏。本地合法范围校验不能证明一个城市名与一组坐标在地理上完全匹配，也不能识别所有数值合法的轴互换。只对可确定的旧大连默认锚点给出具体提示；不会把其他城市/坐标组合自动判成真实所在地。
-
-为保持现有业务边界，即使更换锚点，城市文字仍为“大连市”时也沿用原拦截规则。这是既有策略限制；本轮不擅自解除，也不建议用户填写虚假城市绕过。真实在大连的使用场景需要后续单独评估显式确认策略。
-
-## 检查记录
-
-环境：macOS 27.2 build 26B123 / arm64，Rust 1.96.1，Cargo 1.96.1。Cargo 使用离线依赖模式，没有下载依赖。
-
-| 本轮命令 | 实际结果 |
+| 文件 | 变更 |
 |---|---|
-| `cargo check --workspace --all-targets --locked` | 通过；包括新增测试代码的编译。没有运行测试可执行文件。 |
-| `cargo check --workspace --all-targets --locked --no-default-features` | 通过。 |
-| `cargo clippy --workspace --all-targets --locked` | 通过，存在原有 warnings；未用 `-D warnings` 宣称无告警。 |
-| `cargo fmt --all -- --check` | 退出 1。对 HEAD 只读导出后执行同一检查：基线与当前均为 26 个失败文件，没有新增失败文件。没有整体格式化无关文件。 |
+| `src/ui/map_jobs.rs`（新增） | 独立地图查看任务；按账号、学校、锚点、校区、来源和离线预览状态管理自动尝试与显示快照。 |
+| `src/ui/osm.rs` | 地图打开自动尝试一次；主动重试与取消；XML 导入移入默认折叠高级区，解释格式、WGS84、来源和大小限制；绘制最后成功地图。 |
+| `src/ui/msgs.rs` | 新道路失败不清除同作用域显示快照；成功才接受导入来源；明确显示设置持久化失败；区分地图查看和路线元数据刷新。 |
+| `src/ui/checkpoints.rs`、`src/road_status.rs` | 普通界面使用简明道路状态，完整 HTTP/解析/构图/裁剪错误留在日志与高级区；点位、围栏与路线状态独立。 |
+| `src/api/school_roads.rs` | 进程内公共请求间隔、有界本地文件读取；各阶段增加可区分的道路数量统计。复用原下载和缓存，不自动重试。 |
+| `crates/route-planner/src/load.rs` | 新增 `resolved_highway_ways` 诊断字段，完整 XML 解析后核对节点引用和坐标；原筛选、连边、坐标与裁剪算法不变。 |
+| `src/diagnostics.rs` | 脱敏报告分别归类 502、解析、构图、裁剪及请求间隔，不导出账号、Token、原始响应或坐标。 |
+| `src/ui/device.rs`、`src/crypto/header.rs` | 提取可测试的保存入口；保存后才更新运行时；显示待保存、已保存、定位无效和保存失败；为比较增加 `PartialEq`，协议字段不变。 |
+| `src/startup_data.rs` | 仅新增迁移/重载回归测试，核对旧城市与默认锚点保留，不改变迁移策略。 |
+| `src/ui/map_view_tests.rs`（新增）、`layout_tests.rs`、`checkpoint_integration_tests.rs`、`ui/mod.rs` | 新状态机测试与注册、已有 loopback fixture 复用、简明状态及高级控件的视口测试。 |
+
+首轮 `8f1a075` 还为 `src/api/flow.rs` 的原定位拦截位置替换了更可操作的错误提示；没有改变请求顺序或提交协议。本轮不改登录、运动提交、轨迹真实性检查或身份网络字段。品牌常量、启动动画、中文字体和许可原件保留。原有 `.gitignore` 三行修改及三份未跟踪调查报告保留且未纳入提交，四个文件 SHA-256 复核一致。
+
+## 地图保留、刷新与取消
+
+成功道路单独保留为只读显示快照。刷新时清空本次路线网络、预览和输入；刷新失败或取消后，同作用域旧图可继续查看，UI 明确标记“上次成功加载的地图，仅供查看”。这份快照不能作为路线已就绪的依据。账号、学校、锚点或校区变化后不能继承另一作用域的学校地图；本地文件以其文件来源单独隔离。
+
+每个作用域仅自动尝试一次，重绘和来回切换标签不会反复发送请求。普通重试先使用有效缓存；高级“重新下载路网”可以显式跳过缓存，但受进程内 30 秒间隔约束。间隔不足立即返回可操作提示，不同步睡眠、不自动排队重试。已发出的同步 HTTP 不能立即撤回，仍受 45 秒总超时约束；取消会拒收迟到结果。30 秒限制不等于保证请求永不重叠，也不跨应用进程共享。
+
+OSM XML 导入只接受不超过 24 MiB 的普通文件，执行有界读取、UTF-8/OSM 完整性、道路和坐标校验。失败不覆盖保存的来源；成功后保存设置失败会明确提示重启可能恢复旧来源。不用文件替代平台点位或学校围栏，不取消围栏约束，不把校外道路当作校内道路。
+
+## 路网诊断统计
+
+| 阶段 | 统计与含义 |
+|---|---|
+| `[road:http]` | 请求编号、真实 HTTP 状态、耗时、响应字节；失败正文有界读取和摘要。连接/DNS/TLS/超时保留底层错误。正文含 timeout 的 HTTP 502 仍分类为 502。 |
+| `[road:parse]` | `bytes`、唯一已解析 `nodes`、`ways`、原始 `highway_ways`、引用完整且坐标有效的 `resolved_highway_ways`、筛选后 `retained_road_ways`、缺失节点引用数。解析数量和筛选后数量分别记录。 |
+| `[road:graph]` | WGS84 图节点数、有向边数与唯一 `way_id` 道路数；区分原始无 highway、筛选为空、节点缺失和无边。 |
+| `[road:align]` | BD-09 对齐副本的节点、边、道路数。计数不变只说明数据量，不证明实际校区已经对齐验收。 |
+| `[road:clip]` | 围栏环数量、裁剪前后节点/边/道路数；归零定位为裁剪阶段，无围栏时不伪造边界。 |
+| `[road:cache]` | 当前范围的缓存命中或校验失败；无效下载及裁剪为空不接受为新路网缓存。 |
+
+## 配置状态与限制
+
+保存状态区分尚未保存、已保存、已保存但定位配置无效、保存失败。验证城市非空、经纬度合法且有限；能够确定的旧默认锚点残留给出具体说明。保存失败后保留运行时身份与编辑缓冲区，用户可修正后重试；撤销恢复已生效值。独立临时目录测试覆盖真实文件保存/重载与真实 I/O 失败，检查设备 ID 不变且不产生 session 或提交回执。
+
+输入仍按纬度、经度排列，不自动交换、自动地理编码或补坐标。本地格式校验不能证明任意城市名与数值坐标匹配，也不能识别所有数值合法的轴互换。原来“大连市”文字及默认锚点的运行拦截仍保留；真实大连场景的既有策略限制需要后续单独评估，不在本轮解除。
+
+## 静态检查与 Windows 自动化
+
+环境：macOS 27.2 / 26B123 / arm64，Rust 1.96.1、Cargo 1.96.1。Mac 使用 `CARGO_NET_OFFLINE=true` 读取已有依赖；没有实际启动测试可执行文件。
+
+| 检查 | 结果 |
+|---|---|
+| GUI `cargo check --workspace --all-targets --locked` | 通过，包括新增测试代码的编译。最后两次仅调整视口测试后，也执行 all-targets 编译检查。 |
+| CLI-only 同上加 `--no-default-features` | 通过。 |
+| GUI 与 CLI-only `cargo clippy --workspace --all-targets --locked` | 通过，仍有基线 warnings，未宣称 `-D warnings` 通过。 |
+| `cargo fmt --all -- --check` | 退出 1；基线与最终均 26 个已有失败文件，没有新增失败文件，未整体格式化无关代码。 |
 | `git diff --check` | 通过。 |
-| Mac 单元测试及 GUI 测试 | 按用户要求，本轮不执行；既有 242 项根库、8 项 route-planner 单测、7 项集成测试为前序基线记录，不冒充本轮结果。 |
-| Windows 自动化测试与发行 ZIP | Run `42625859386` 成功；GUI 配置根库 248 项、CLI-only 根库 158 项；两种配置的路由单测均 9 项、集成均 7 项通过。发行 ZIP 已下载并核验。 |
+| Mac release 编译 | 通过；源码 `4c60231899ede1dfd0c45411fd63453d272878cc`，没有运行二进制。 |
+| Windows 最终 Actions | Run `42631381837`，`success`；源码与 Mac 构建一致。 |
+| Windows 默认 GUI 配置测试 | 根 crate 257 项、route-planner 单测 10 项及集成 7 项，全部通过、0 失败。 |
+| Windows CLI-only 配置测试 | 根 crate 161 项、route-planner 单测 10 项及集成 7 项，全部通过、0 失败。 |
+| Windows 包与 CLI smoke | GUI/CLI 检查、Clippy、两种 release 构建、--help、--version、包内 manifest、许可收集及解压后 CLI smoke 通过。 |
+| Mac / Windows 实机 GUI | Mac 最终新构建未执行；旧构建仅完成一次获授权的在线路网诊断。Windows Runner 图形状态见下；均不能以编译或 headless 绘制断言代替最终版本实机验收。 |
 
-新增测试涵盖：原始/筛选后 highway 计数、ways 先于 nodes、502 错误摘要和单次请求、超时分类、XML 错误/空道路/缺失节点分层、围栏裁剪前后计数、未改变返回 WGS84 坐标、无效路网不落盘、离线禁止传输、城市已改但锚点未改、空城市/无效坐标与无关设备修改兼容性。现有缓存复用与点位独立显示测试继续保留。
+新增测试验证：地图打开不请求 policy、不改变运行模式；重绘/标签切换不重复请求；502、超时、空 OSM 后点位与同范围旧地图保留而路线输入为空；定位变化不沿用旧图；文件高级区默认隐藏；错误导入保留保存来源；30 秒间隔拒绝不重置时间；本地文件大小/内容验证；道路引用/坐标诊断统计；配置真实保存、重载、I/O 失败及旧配置迁移。既有坐标、点位缓存、道路缓存、取消/迟到结果与路线回归测试继续运行。
 
-日志和静态检查结果：`/Users/mac/Desktop/run fasting/verification/map-device-diagnostics-20261109/`。所有新样本仅为合成公开地理坐标或 loopback HTTP，不使用账号凭据。
+首次 Run `42630348537` 为 256 通过、1 项旧技术状态文案断言失败；第二次 Run `42630871567` 的同一视口用例在桌面尺寸失败。测试已改为核对新简明状态、在滚动容器内投递滚轮、等待滚动稳定，并判断道路线段包围盒与裁剪区相交，避免只看端点而漏掉穿过视口的道路。失败日志保留，不冒充成功结果。
 
-## Mac 交付与用户验证
+## 交付与校验
 
-已安装入口为 `/Users/mac/Applications/NekoSportsWorldTool.app`。其启动器已清除 `NSWT_OFFLINE` 与 `NSWT_DATA_DIR`，使用常规在线模式和原默认数据目录。当前应用进程不强行关闭，避免打断用户操作；本轮构建安装后需退出并重开才能加载新代码。
+- 最终源码：`4c60231899ede1dfd0c45411fd63453d272878cc`；已推送现有开发分支。构建成功后本报告单独提交，文档提交不触发无关构建。
+- Mac 安装位置：`/Users/mac/Applications/NekoSportsWorldTool.app`。启动器清除 `NSWT_OFFLINE` 与 `NSWT_DATA_DIR`，采用常规在线模式及原默认数据目录；安装器未写入身份、会话或点位缓存，本次 GUI 操作已恢复原地图来源及算法选择。已运行的应用进程不重启，由用户退出重开后加载更新。
+- Mac 新可执行文件 SHA-256：`3374f59e412f3f4f3b8cfd0dbf5c4982c2753f60681ef7522dbf3a2d47e1fdee`；本地 ad-hoc 签名及 `codesign --verify --deep --strict` 文件校验通过；没有 Developer ID 公证，最终新构建没有执行应用测试；旧构建只执行上文获授权的路网诊断。
+- Mac 仅交付本地更新应用。本轮尝试使用既有许可收集器生成额外 Mac ZIP 时，收集器因 macOS 专用依赖缺少本地上游许可文本而停止；没有用 Windows 许可清单冒充 Mac 清单，也没有将不完整包作为发行 ZIP。
+- Windows Run：`42631381837`；目标 `x86_64-pc-windows-msvc`，Rust 1.96.1，GUI/CLI 双模式、静态 C runtime、版本 0.3.1 与原 ZIP 布局保留。
+- Windows ZIP：`/Users/mac/Desktop/run fasting/verification/map-device-diagnostics-20261109/goal-completion/windows-actions-42631381837/NekoSportsWorldTool-J-claude-Windows-x64.zip`。
+- Windows ZIP SHA-256：`7ebced3ee4a8551f3ce12515d77f133fe2b6ab1f53afbd1e9fc70d54ab4bb6b8`。
+- ZIP 校验：ZIP CRC 通过，538 项内部 SHA-256 全部一致，共 539 个文件，源码、版本、目标及完整署名匹配；保留 LICENSE、THIRD-PARTY-NOTICES 和依赖许可文件，无身份、会话、配置或日志数据。
+- Windows EXE SHA-256：`b11e9d16d9cb804bb8482f2d9316417110c6444b1c886b3ba02085728f73fa00`。
+- Runner GUI smoke：`unavailable_missing_opengl_2_context`。Windows 10/11 实机窗口、DPI、地图操作及实际网络仍待用户验证；构建成功不等于实机通过。
+- 未创建公开 Release。完整日志、失败记录、静态检查、备份与产物位于 `/Users/mac/Desktop/run fasting/verification/map-device-diagnostics-20261109/goal-completion/`。
 
-用户负责测试账号、登录、真实城市及锚点核对、校区选择与在线地图刷新。本轮不修改这些真实数据，不代为开始跑步，不提交运动记录。需要用户实测的项目：实际校区 OSM 覆盖、围栏与道路配对、真实地理位置匹配、GUI 提示及网络环境。Windows 编译和 Mock 通过也不能替代 Windows 实机图形验收。
+## 尚未解决与用户验证项
 
-## 交付记录
-
-- 源码提交：`8f1a0753b91975c2968ed3cccdf06884b84550b7`，已推送到用户 Fork 的既有开发分支。
-- Mac release 编译成功；安装位置：`/Users/mac/Applications/NekoSportsWorldTool.app`。实际为 arm64，完成本地 ad-hoc 签名与 `codesign --verify --deep --strict` 文件校验；没有 Developer ID 签名或公证。本轮没有执行 Mac GUI 或 CLI 测试。
-- Mac 可执行文件 SHA-256：`db70b531e1f152ae8d0b06b3e0b1d146449ca2bcf7dd94e072f7d70500be7b8a`。
-- Mac ZIP：`/Users/mac/Desktop/run fasting/verification/map-device-diagnostics-20261109/NekoSportsWorldTool-0.3.1-macOS-arm64-diagnostics.zip`，SHA-256：`70f123d817524821a34d1d08e6146b21d3749ed0877d50761d8113bb9aeb8a14`。
-- 当前运行中的旧进程未重启；用户退出并重开应用后使用该提交。
-- Windows Actions Run：`42625859386`，对应上述代码提交，沿用 `windows-build.yml`，结论 `success`。GUI/CLI 检查、两种 feature 配置的 workspace 单测、Clippy、release、打包和 CLI/package smoke 均通过。
-- Windows 测试数量：默认 GUI 配置根 crate 248、route-planner 9 单测与 7 集成测试；CLI-only 根 crate 158、route-planner 9 单测与 7 集成测试。均为 0 失败。没有账户登录或运动记录提交测试。
-- Windows ZIP：`/Users/mac/Desktop/run fasting/verification/map-device-diagnostics-20261109/windows-actions-42625859386/NekoSportsWorldTool-J-claude-Windows-x64.zip`。
-- Windows ZIP SHA-256：`90037d77a97a5e3e2d90635b773e3f3f3ebf6c48a5aacda06e8f750c647f0f46`；与 runner 输出一致；ZIP CRC 及内部 538 项 checksum 均通过，共 539 个文件，保留 LICENSE 和 THIRD-PARTY-NOTICES。
-- Windows EXE SHA-256：`9828efc8a6ed5233b37933b3912e3e932f1677707dba70eb3fc90c380a6576ff`。包内版本 0.3.1、目标 `x86_64-pc-windows-msvc`、完整开发署名与源码提交匹配。
-- Runner 的 GUI smoke 明确为 `unavailable_missing_opengl_2_context`；Windows 10/11 实机窗口、显示/缩放和在线地图仍待用户完成，不能把构建成功标记为实机通过。
-- 未创建公开 Release；保护的四个已有工作区文件 SHA-256 均保持原值。
+实际学校裁剪归零的最终原因仍待同次 `[road:http]`、`parse`、`graph`、`align`、`clip` 记录与脱敏边界/OSM 配对核验；当前只能定位阶段。未自动猜测或修正城市位置，也未接入额外地理编码服务。保留原位置真实性拦截及已发出同步 HTTP 不能即时中断的限制。用户仍需核对真实城市、实际锚点、校区选择和最终版本 GUI。代理仅执行获授权的读取与地图刷新，没有代登录、开始跑步或提交运动记录。
