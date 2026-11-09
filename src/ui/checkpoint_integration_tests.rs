@@ -324,15 +324,18 @@ fn cached_checkpoints_survive_real_502_timeout_and_empty_osm_with_or_without_bou
                 app.checkpoints.data.error.is_none(),
                 "road errors cannot become checkpoint errors"
             );
-            assert!(
-                app.osm_page.status.contains(match label {
-                    "502" => "502",
-                    "timeout" => "时",
-                    _ => "可用",
-                }),
-                "{}",
-                app.osm_page.status
-            );
+            let road_status = app.osm_page.status.to_ascii_lowercase();
+            let status_matches = match label {
+                "502" => road_status.contains("502"),
+                "timeout" => {
+                    road_status.contains("超时")
+                        || road_status.contains("timeout")
+                        || road_status.contains("timed out")
+                        || road_status.contains("10060")
+                }
+                _ => app.osm_page.status.contains("可用"),
+            };
+            assert!(status_matches, "{}", app.osm_page.status);
             assert!(!app.run_busy);
             assert!(!root.0.join("submission_receipts").exists());
             // Restart/re-read doesn't need OSM or route inputs.
