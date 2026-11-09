@@ -91,6 +91,9 @@ pub struct RunPage {
     pub route_mode: RouteMode,
     /// 地图视图状态
     pub map: MapState,
+    /// Independent platform-checkpoint view, always WGS84 (the route map uses BD09).
+    pub checkpoint_map: MapState,
+    pub checkpoint_fitted: bool,
     /// 路网预览（真实道路路由）
     pub preview: Option<crate::track::generate_road::RoadPlan>,
     /// 预览是否过期（参数变更后置真）
@@ -528,6 +531,8 @@ impl App {
     }
 
     fn draw_run_map(&mut self, ui: &mut egui::Ui) {
+        self.draw_checkpoint_overview(ui);
+        ui.separator();
         if self.run_page.route_mode != RouteMode::Road {
             ui.label("经典模式仅按点位拟合，不包含建筑避让；需要沿道路行进时请选择真实道路模式。");
             return;

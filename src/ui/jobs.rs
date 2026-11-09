@@ -17,6 +17,7 @@ impl App {
             || self.records_busy
             || self.data_busy
             || self.user_busy
+            || self.checkpoints.busy
             || self.osm_page.busy
             || self.run_page.preview_busy
     }
@@ -91,11 +92,16 @@ impl App {
     /// 后台拉取实时点位并落盘（供路线预览使用），完成后触发预览刷新。
     /// 复用 fetch_points 的 TTL 缓存，仅在 Road 模式且锚点已配置时拉取。
     pub(crate) fn refresh_points(&mut self) {
-        self.refresh_school_route(false);
+        if self.run_page.route_mode == RouteMode::Road {
+            self.refresh_school_route(false);
+        } else {
+            self.refresh_checkpoint_layer();
+        }
     }
 
     pub(crate) fn refresh_school_route(&mut self, force: bool) {
         if crate::runtime::offline() {
+            self.refresh_checkpoint_layer();
             if !self.config.osm_path.is_empty() {
                 self.load_osm_async(self.config.osm_path.clone());
             } else {
@@ -103,7 +109,10 @@ impl App {
             }
             return;
         }
-        if self.run_page.route_mode != RouteMode::Road {
+        if self.run_page.route_mode != RouteMode::Road
+            || self.osm_page.busy
+            || self.checkpoints.busy
+        {
             return;
         }
         let Some(session) = self.session.clone() else {
@@ -120,6 +129,8 @@ impl App {
         } else {
             None
         };
+        let layer_request = self.begin_checkpoint_load();
+        let layer_tx = self.layer_tx.clone();
         let request_id = self.begin_network_load();
         self.network = manual_network.clone();
         let identity = self.identity.clone();
@@ -137,6 +148,8 @@ impl App {
         let net_tx = self.net_tx.clone();
         #[cfg(test)]
         let route_fixture = self.route_fixture.clone();
+        #[cfg(test)]
+        let overpass_fixture = self.route_overpass_fixture.clone();
         self.osm_page.status = "正在获取学校点位、围栏及路网…".into();
         self.spawn_session_job(move |tx| {
             let mut log = App::logger(tx.clone());
@@ -146,6 +159,9 @@ impl App {
                 client.set_test_host(host);
                 crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = Some(data_dir));
             }
+            #[cfg(test)]
+            crate::api::school_roads::TEST_OVERPASS
+                .with(|value| *value.borrow_mut() = overpass_fixture);
             let mut loaded = manual_network;
             let mut inputs = None;
             let mut campuses = Vec::new();
@@ -171,40 +187,21 @@ impl App {
                         result: Ok(net),
                     });
                 }
-                stage("获取当前学校围栏…");
-                let response = crate::api::fence::fetch_geo_fence_response(&mut client)?;
-                campuses = crate::api::campus::catalog(&response);
+                stage("独立读取打卡点与学校围栏…");
+                let metadata = super::checkpoint_jobs::load_metadata(
+                    &mut client,
+                    preview_anchor,
+                    selection.as_ref(),
+                    &layer_request,
+                    &layer_tx,
+                    &mut log,
+                )?;
+                campuses = metadata.campuses;
+                selected_key = metadata.selected_key;
+                let fences = metadata.fences;
+                let pts = metadata.points;
                 let school = client.login.as_ref().ok_or("未登录")?.unid.clone();
-                let campus = crate::api::campus::chosen(&campuses, selection.as_ref(), &school)
-                    .or_else(|| {
-                        campuses.iter().find(|c| {
-                            preview_anchor.is_some_and(|anchor| {
-                                c.polygons.iter().any(|p| {
-                                    route_planner::point_in_polygon(
-                                        &p.iter()
-                                            .map(|&(a, b)| route_planner::Coord::new(b, a))
-                                            .collect::<Vec<_>>(),
-                                        route_planner::Coord::new(
-                                            anchor.longitude,
-                                            anchor.latitude,
-                                        ),
-                                    )
-                                })
-                            })
-                        })
-                    })
-                    .or_else(|| campuses.first())
-                    .cloned();
-                let fences = campus
-                    .as_ref()
-                    .map(|c| c.polygons.clone())
-                    .unwrap_or_default();
-                let run_area_id = if let Some(campus) = &campus {
-                    selected_key = campus.key.clone();
-                    campus.run_area_id(response.area.run_area_id)?
-                } else {
-                    (response.area.run_area_id >= 0).then(|| response.area.run_area_id.to_string())
-                };
+                let campus = campuses.iter().find(|c| c.key == selected_key);
                 control.check()?;
                 stage("下载或读取学校路网…");
                 if loaded.is_none() && campus.is_some() {
@@ -234,12 +231,7 @@ impl App {
                 stage("获取当前学校策略与路线点位…");
                 let policy = crate::api::policy::fetch_policy(&mut client)?;
                 control.check()?;
-                let pts = crate::api::points::fetch_points_ext(
-                    &mut client,
-                    anchor,
-                    run_area_id,
-                    &mut log,
-                )?;
+                let pts = pts?;
                 if pts.is_empty() || crate::api::points::points_bd(&pts).len() != pts.len() {
                     return Err("点位为空或坐标无效".into());
                 }
@@ -288,6 +280,10 @@ impl App {
                 }
                 Ok(())
             })();
+            let _ = layer_tx.send(super::checkpoint_jobs::LayerLoad {
+                request: layer_request,
+                update: super::checkpoint_jobs::LayerUpdate::Finished,
+            });
             let (result, warning) = finish_road_load(loaded, result);
             let _ = net_tx.send(super::osm::NetworkLoad {
                 pending: false,

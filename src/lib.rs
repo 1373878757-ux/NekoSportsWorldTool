@@ -1,6 +1,8 @@
 //! Shared desktop and Android application.
 
 mod api;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod checkpoint;
 pub mod cli;
 mod crypto;
 mod diagnostics;

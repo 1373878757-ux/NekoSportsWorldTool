@@ -3,7 +3,7 @@ use crate::presentation::STATUS_BAR_CREDIT;
 use egui::{Event, PointerButton, Pos2, Rect, Vec2};
 
 #[path = "route_refresh_tests.rs"]
-mod route_refresh_tests;
+pub(crate) mod route_refresh_tests;
 #[path = "violation_tests.rs"]
 mod violation_tests;
 

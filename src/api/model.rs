@@ -406,6 +406,66 @@ struct PointsCache {
     points: Vec<serde_json::Value>,
 }
 
+/// Read-only display snapshot. Expired entries remain available for inspection;
+/// they must never be passed off as a fresh business-cache hit.
+#[derive(Debug, Clone)]
+pub struct PointsSnapshot {
+    pub ts: i64,
+    pub anchor: crate::location::Coordinate,
+    pub scope: PointsCacheScope,
+    pub points: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointsSnapshotFreshness {
+    Fresh,
+    Stale,
+}
+
+impl PointsSnapshot {
+    /// Uses an explicit clock so the 300-second boundary is testable.
+    pub fn freshness(&self, now: i64) -> Result<PointsSnapshotFreshness, String> {
+        if self.ts <= 0 {
+            return Err("打卡点缓存时间戳无效".into());
+        }
+        let age = now
+            .checked_sub(self.ts)
+            .filter(|age| *age >= 0)
+            .ok_or("打卡点缓存来自未来或时间戳无效")?;
+        Ok(if age < POINTS_TTL_MS {
+            PointsSnapshotFreshness::Fresh
+        } else {
+            PointsSnapshotFreshness::Stale
+        })
+    }
+}
+
+/// Reads only points_cache.json under the current data root. This does not load
+/// identity/session data, migrate directories, refresh a token, or send HTTP.
+/// A missing file and a damaged cache are intentionally different outcomes.
+pub fn read_points_snapshot() -> Result<Option<PointsSnapshot>, String> {
+    let path = exe_dir().join("points_cache.json");
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("读取打卡点缓存失败: {error}")),
+    };
+    let cache: PointsCache =
+        serde_json::from_str(&text).map_err(|error| format!("打卡点缓存格式损坏: {error}"))?;
+    cache
+        .anchor
+        .validate()
+        .map_err(|error| format!("打卡点缓存锚点无效: {error}"))?;
+    let snapshot = PointsSnapshot {
+        ts: cache.ts,
+        anchor: cache.anchor,
+        scope: cache.scope,
+        points: cache.points,
+    };
+    snapshot.freshness(crate::crypto::envelope::now_ms())?;
+    Ok(Some(snapshot))
+}
+
 impl PointsCache {
     fn matches(
         &self,
@@ -454,6 +514,124 @@ pub fn save_points_cache(
 #[cfg(test)]
 mod points_cache_tests {
     use super::*;
+
+    struct SnapshotDirectory(std::path::PathBuf);
+
+    impl SnapshotDirectory {
+        fn new() -> Self {
+            let root =
+                std::env::temp_dir().join(format!("neko-points-snapshot-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = Some(root.clone()));
+            Self(root)
+        }
+
+        fn write(&self, document: &serde_json::Value) {
+            std::fs::write(
+                self.0.join("points_cache.json"),
+                serde_json::to_vec(document).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    impl Drop for SnapshotDirectory {
+        fn drop(&mut self) {
+            crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = None);
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn snapshot_document(ts: i64) -> serde_json::Value {
+        serde_json::json!({
+            "ts":ts,
+            "anchor":{"latitude":28.2,"longitude":112.9,"accuracy":0},
+            "scope":{"uid":1,"unid":"offline-test","run_area_id":null},
+            "points":[{"pointId":"1001","pointName":"离线中文点位","lat":28.2,"lon":112.9}]
+        })
+    }
+
+    #[test]
+    fn snapshot_reads_only_current_root_and_does_not_create_identity_data() {
+        let directory = SnapshotDirectory::new();
+        assert!(read_points_snapshot().unwrap().is_none());
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+        let now = crate::crypto::envelope::now_ms();
+        let document = snapshot_document(now);
+        directory.write(&document);
+        let snapshot = read_points_snapshot().unwrap().unwrap();
+        assert_eq!(snapshot.ts, now);
+        assert_eq!(snapshot.scope.uid, 1);
+        assert_eq!(snapshot.scope.unid, "offline-test");
+        assert_eq!(snapshot.points[0], document["points"][0]);
+        assert_eq!(snapshot.freshness(now), Ok(PointsSnapshotFreshness::Fresh));
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn snapshot_clock_marks_exact_ttl_stale_without_changing_business_cache() {
+        let directory = SnapshotDirectory::new();
+        let ts = crate::crypto::envelope::now_ms() - POINTS_TTL_MS - 1;
+        directory.write(&snapshot_document(ts));
+        let snapshot = read_points_snapshot().unwrap().unwrap();
+        assert_eq!(snapshot.freshness(ts), Ok(PointsSnapshotFreshness::Fresh));
+        assert_eq!(
+            snapshot.freshness(ts + POINTS_TTL_MS - 1),
+            Ok(PointsSnapshotFreshness::Fresh)
+        );
+        assert_eq!(
+            snapshot.freshness(ts + POINTS_TTL_MS),
+            Ok(PointsSnapshotFreshness::Stale)
+        );
+        assert_eq!(
+            snapshot.freshness(i64::MAX),
+            Ok(PointsSnapshotFreshness::Stale)
+        );
+        assert!(snapshot.freshness(ts - 1).is_err());
+        assert!(
+            load_points_cache_for(snapshot.anchor, &snapshot.scope).is_none(),
+            "read-only display of stale data must not extend business-cache TTL"
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_corruption_invalid_anchor_and_future_timestamp() {
+        let directory = SnapshotDirectory::new();
+        std::fs::write(directory.0.join("points_cache.json"), b"{broken").unwrap();
+        assert!(read_points_snapshot().unwrap_err().contains("格式损坏"));
+        let now = crate::crypto::envelope::now_ms();
+        for document in [
+            serde_json::json!({"ts":now,"points":[]}),
+            serde_json::json!({"ts":now,"anchor":{"latitude":28.2,"longitude":112.9},"scope":{"uid":1,"unid":"offline-test"},"points":"invalid"}),
+        ] {
+            directory.write(&document);
+            assert!(read_points_snapshot().is_err());
+        }
+        let mut invalid_anchor = snapshot_document(now);
+        invalid_anchor["anchor"]["latitude"] = serde_json::json!(91);
+        directory.write(&invalid_anchor);
+        assert!(read_points_snapshot().unwrap_err().contains("锚点无效"));
+        directory.write(&snapshot_document(now + 60_000));
+        assert!(read_points_snapshot().unwrap_err().contains("未来"));
+        directory.write(&snapshot_document(0));
+        assert!(read_points_snapshot().unwrap_err().contains("时间戳无效"));
+    }
+
+    #[test]
+    fn snapshot_preserves_invalid_point_rows_for_display_diagnostics() {
+        let directory = SnapshotDirectory::new();
+        let mut document = snapshot_document(crate::crypto::envelope::now_ms());
+        document["points"] =
+            serde_json::json!([{"lat":91,"lon":112.9},null,{"lat":28.2,"lon":112.9}]);
+        directory.write(&document);
+        let snapshot = read_points_snapshot().unwrap().unwrap();
+        assert_eq!(snapshot.points.len(), 3);
+        assert_eq!(
+            snapshot.points,
+            document["points"].as_array().unwrap().clone()
+        );
+    }
+
     #[test]
     fn cache_is_scoped_to_anchor() {
         let cache = PointsCache {

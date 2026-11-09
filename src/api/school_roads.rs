@@ -7,6 +7,11 @@ const MAX_BYTES: u64 = 24 * 1024 * 1024;
 const TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const ENDPOINT: &str = "https://overpass-api.de/api/interpreter";
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_OVERPASS: std::cell::RefCell<Option<(String, Duration)>> = const { std::cell::RefCell::new(None) };
+}
+
 pub fn validate_fences(fences: &[Vec<(f64, f64)>]) -> Result<(), String> {
     if fences.is_empty() {
         return Err("当前学校没有有效围栏，无法保证校内路线；请先确认学校围栏".into());
@@ -102,11 +107,21 @@ fn parse(bytes: &[u8]) -> Result<RoadGraph, String> {
 
 fn download(query: &str) -> Result<Vec<u8>, String> {
     crate::runtime::ensure_network_allowed()?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(45))
-        .build();
+    #[cfg(test)]
+    let fixture = TEST_OVERPASS.with(|value| value.borrow().clone());
+    #[cfg(test)]
+    let (endpoint, timeout) = fixture
+        .as_ref()
+        .map(|(endpoint, timeout)| {
+            assert!(endpoint.starts_with("http://127.0.0.1:"));
+            (endpoint.as_str(), *timeout)
+        })
+        .unwrap_or((ENDPOINT, Duration::from_secs(45)));
+    #[cfg(not(test))]
+    let (endpoint, timeout) = (ENDPOINT, Duration::from_secs(45));
+    let agent = ureq::AgentBuilder::new().timeout(timeout).build();
     let response = agent
-        .post(ENDPOINT)
+        .post(endpoint)
         .set("User-Agent", "NekoSportsWorldTool/0.3.0 (school-road-map)")
         .send_form(&[("data", query)])
         .map_err(|e| format!("自动获取学校路网失败：{e}"))?;
@@ -405,6 +420,80 @@ pub fn load_for_route_cancellable(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct LoopbackOverride {
+        overpass: Option<(String, Duration)>,
+        offline: Option<bool>,
+    }
+
+    impl LoopbackOverride {
+        fn new(endpoint: String, timeout: Duration) -> Self {
+            assert!(endpoint.starts_with("http://127.0.0.1:"));
+            let overpass = TEST_OVERPASS.with(|value| value.replace(Some((endpoint, timeout))));
+            let offline = crate::runtime::TEST_OFFLINE.with(|value| value.replace(Some(false)));
+            Self { overpass, offline }
+        }
+    }
+
+    impl Drop for LoopbackOverride {
+        fn drop(&mut self) {
+            TEST_OVERPASS.with(|value| *value.borrow_mut() = self.overpass.take());
+            crate::runtime::TEST_OFFLINE.with(|value| value.set(self.offline));
+        }
+    }
+
+    fn loopback_response(
+        status: &str,
+        body: &[u8],
+        delay: Duration,
+    ) -> (String, std::thread::JoinHandle<usize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/api/interpreter", listener.local_addr().unwrap());
+        let status = status.to_owned();
+        let body = body.to_vec();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            loop {
+                let n = stream.read(&mut buffer).unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..n]);
+                let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..end]);
+                let content_length = headers
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if request.len() >= end + 4 + content_length {
+                    break;
+                }
+            }
+            assert!(request.starts_with(b"POST /api/interpreter "));
+            assert!(String::from_utf8_lossy(&request).contains("data="));
+            std::thread::sleep(delay);
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            // A deliberately timed-out client may already have closed its socket.
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&body);
+            1
+        });
+        (endpoint, server)
+    }
+
     fn fixture() -> (Vec<Vec<(f64, f64)>>, Vec<u8>) {
         let fences = vec![vec![
             (39.899, 116.399),
@@ -417,6 +506,80 @@ mod tests {
         .collect()];
         let xml=br#"<osm version="0.6"><node id="1" lat="39.9" lon="116.4"/><node id="2" lat="39.901" lon="116.401"/><way id="1"><nd ref="1"/><nd ref="2"/><tag k="highway" v="footway"/></way></osm>"#.to_vec();
         (fences, xml)
+    }
+
+    #[test]
+    fn loopback_502_is_reported_without_an_automatic_retry() {
+        let (endpoint, server) =
+            loopback_response("502 Bad Gateway", b"fixture gateway error", Duration::ZERO);
+        let _guard = LoopbackOverride::new(endpoint, Duration::from_secs(2));
+        let error = download("[out:xml];out;").unwrap_err();
+        assert!(error.contains("502"), "{error}");
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    #[test]
+    fn loopback_timeout_finishes_without_waiting_for_the_server() {
+        let (endpoint, server) =
+            loopback_response("200 OK", b"<osm></osm>", Duration::from_millis(250));
+        let _guard = LoopbackOverride::new(endpoint, Duration::from_millis(50));
+        let started = std::time::Instant::now();
+        let error = download("[out:xml];out;").unwrap_err();
+        assert!(error.contains("自动获取学校路网失败"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    #[test]
+    fn loopback_empty_osm_is_not_accepted_into_the_cache() {
+        let dir = std::env::temp_dir().join(format!("empty-road-{}", uuid::Uuid::new_v4()));
+        let (endpoint, server) = loopback_response("200 OK", b"<osm></osm>", Duration::ZERO);
+        let _guard = LoopbackOverride::new(endpoint, Duration::from_secs(2));
+        let error = cached_network(
+            &dir,
+            "fixture-school",
+            &fixture().0,
+            false,
+            1000,
+            download,
+            &mut |_| {},
+        )
+        .err()
+        .unwrap();
+        assert!(error.contains("未找到可用的 highway 道路"), "{error}");
+        assert!(!dir.exists());
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    #[test]
+    fn loopback_downloaded_roads_are_reused_without_a_second_request() {
+        let dir = std::env::temp_dir().join(format!("cached-road-{}", uuid::Uuid::new_v4()));
+        let (fences, xml) = fixture();
+        let (endpoint, server) = loopback_response("200 OK", &xml, Duration::ZERO);
+        let _guard = LoopbackOverride::new(endpoint, Duration::from_secs(2));
+        let first = cached_network(
+            &dir,
+            "fixture-school",
+            &fences,
+            false,
+            1000,
+            download,
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(server.join().unwrap(), 1);
+        let second = cached_network(
+            &dir,
+            "fixture-school",
+            &fences,
+            false,
+            1001,
+            |_| panic!("a fresh road cache must not send another request"),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(first.graph.edge_count(), second.graph.edge_count());
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn coordinate_round_trip_and_query_scope() {

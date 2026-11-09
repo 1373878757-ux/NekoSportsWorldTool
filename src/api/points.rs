@@ -10,6 +10,9 @@ use crate::crypto::sign::md5_url_sign;
 use crate::location::Coordinate;
 use serde_json::{json, Value};
 
+type PersistPointsCache<'a> =
+    dyn FnMut(Coordinate, &model::PointsCacheScope, &[Value]) -> Result<(), String> + 'a;
+
 pub const POINTS_PATH: &str = "/api/v560/get/1/distance/1";
 
 /// 经纬度六位小数字符串。
@@ -33,6 +36,33 @@ pub fn fetch_points_ext(
     run_area_id: Option<String>,
     log: &mut dyn FnMut(&str),
 ) -> Result<Vec<Value>, String> {
+    fetch_points_ext_observed(
+        client,
+        anchor,
+        run_area_id,
+        log,
+        &mut |_| {},
+        &mut |anchor, scope, points| {
+            // Keep the existing business API's best-effort cache persistence.
+            let _ = model::save_points_cache(anchor, scope, points);
+            Ok(())
+        },
+    )
+}
+
+/// Observe raw point rows for read-only diagnostics without weakening the business parser.
+/// This is the same request/cache path; invalid rows still fail route/submit callers.
+/// A cancellable caller must serialize cancellation and `persist` with the same gate,
+/// then check request validity while holding it before saving. No cache is written
+/// internally, so a rejected late response cannot overwrite the current cache.
+pub(crate) fn fetch_points_ext_observed(
+    client: &mut ApiClient,
+    anchor: Coordinate,
+    run_area_id: Option<String>,
+    log: &mut dyn FnMut(&str),
+    observe: &mut dyn FnMut(&[Value]),
+    persist: &mut PersistPointsCache<'_>,
+) -> Result<Vec<Value>, String> {
     anchor.validate()?;
     let login = client.login.as_ref().ok_or("请先登录后获取点位")?;
     let scope = model::PointsCacheScope {
@@ -47,6 +77,7 @@ pub fn fetch_points_ext(
             (crate::crypto::envelope::now_ms() - ts) / 1000,
             pts.len()
         ));
+        observe(&pts);
         return Ok(pts);
     }
     // ② 请求接口
@@ -87,8 +118,14 @@ pub fn fetch_points_ext(
 
     let out = client.envelope_request("POST", &url, &body, crate::crypto::header::UA_IOS, &[])?;
     let dec = out.decrypted.ok_or("点位接口响应无法解密")?;
+    let business = super::client::check_business(&dec.business)?;
+    if let Some(points) =
+        super::client::get_field(&business, "pointsResModels").and_then(Value::as_array)
+    {
+        observe(points);
+    }
     let pts = parse_points(&dec.business)?;
-    let _ = model::save_points_cache(anchor, &scope, &pts);
+    persist(anchor, &scope, &pts)?;
     Ok(pts)
 }
 
@@ -151,6 +188,157 @@ pub fn route_points(required: &[(f64, f64)], live: &[Value]) -> Vec<(f64, f64)> 
 #[cfg(test)]
 mod route_tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    struct PointCacheFixture(std::path::PathBuf);
+    impl PointCacheFixture {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("points-cancel-cache-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).unwrap();
+            crate::platform::TEST_DATA_DIR.with(|dir| *dir.borrow_mut() = Some(path.clone()));
+            Self(path)
+        }
+    }
+    impl Drop for PointCacheFixture {
+        fn drop(&mut self) {
+            crate::platform::TEST_DATA_DIR.with(|dir| *dir.borrow_mut() = None);
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn read_request(stream: &mut std::net::TcpStream) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0_u8; 4096];
+            let count = stream.read(&mut chunk).unwrap();
+            assert_ne!(count, 0, "incomplete loopback request");
+            bytes.extend_from_slice(&chunk[..count]);
+            if let Some(index) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                break index + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&bytes[..header_end]);
+        assert!(headers.starts_with(&format!("POST {POINTS_PATH} HTTP/1.1\r\n")));
+        let content_length: usize = headers
+            .lines()
+            .find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                key.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().unwrap())
+            })
+            .unwrap();
+        while bytes.len() < header_end + content_length {
+            let mut chunk = [0_u8; 4096];
+            let count = stream.read(&mut chunk).unwrap();
+            assert_ne!(count, 0, "incomplete loopback request body");
+            bytes.extend_from_slice(&chunk[..count]);
+        }
+    }
+
+    #[test]
+    fn cancelled_late_loopback_response_cannot_overwrite_newer_cache() {
+        let fixture = PointCacheFixture::new();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            arrived_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let response = json!({
+                "error":10000,
+                "pointsResModels":[{"pointId":"late","lat":28.2,"lon":112.9}]
+            })
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .unwrap();
+        });
+
+        let anchor = Coordinate {
+            latitude: 28.2,
+            longitude: 112.9,
+            accuracy: 0.0,
+        };
+        let scope = model::PointsCacheScope {
+            uid: 42,
+            unid: "isolated-fixture".into(),
+            run_area_id: Some("campus-new".into()),
+        };
+        let newest = json!({
+            "pointId":"newest",
+            "lat":28.21,
+            "lon":112.91
+        });
+        let control = Arc::new(crate::task_control::Control::default());
+        let commit_gate = Arc::new(Mutex::new(()));
+        let root = fixture.0.clone();
+        let worker_control = control.clone();
+        let worker_gate = commit_gate.clone();
+        let worker_scope = scope.clone();
+        let worker = std::thread::spawn(move || {
+            crate::platform::TEST_DATA_DIR.with(|dir| *dir.borrow_mut() = Some(root));
+            crate::runtime::TEST_OFFLINE.with(|offline| offline.set(Some(false)));
+            let mut client = ApiClient::new(
+                crate::crypto::header::HeaderIdentity::default(),
+                Some(model::Session {
+                    uid: worker_scope.uid,
+                    unid: worker_scope.unid.clone(),
+                    token: "isolated-fixture".into(),
+                    ..Default::default()
+                }),
+            );
+            client.set_test_host(host);
+            let mut persist =
+                |anchor: Coordinate, scope: &model::PointsCacheScope, points: &[Value]| {
+                    let _commit = worker_gate
+                        .lock()
+                        .map_err(|_| "cache commit lock poisoned")?;
+                    worker_control.check()?;
+                    model::save_points_cache(anchor, scope, points)
+                };
+            let result = fetch_points_ext_observed(
+                &mut client,
+                anchor,
+                worker_scope.run_area_id.clone(),
+                &mut |_| {},
+                &mut |_| {},
+                &mut persist,
+            );
+            crate::platform::TEST_DATA_DIR.with(|dir| *dir.borrow_mut() = None);
+            crate::runtime::TEST_OFFLINE.with(|offline| offline.set(None));
+            result
+        });
+
+        arrived_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        {
+            // Serialize request cancellation with the late worker's cache commit.
+            let _commit = commit_gate.lock().unwrap();
+            assert!(control.cancel());
+            model::save_points_cache(anchor, &scope, std::slice::from_ref(&newest)).unwrap();
+        }
+        release_tx.send(()).unwrap();
+        let late_result = worker.join().unwrap();
+        server.join().unwrap();
+        assert!(late_result.unwrap_err().contains("已取消"));
+
+        let snapshot = model::read_points_snapshot().unwrap().unwrap();
+        assert_eq!(snapshot.points, vec![newest]);
+        assert_eq!(snapshot.scope, scope);
+    }
+
     #[test]
     fn direct_envelope_points_decode_json_text_business_data() {
         let point = json!({"lat":"39.9","lon":"116.4","isMustPoint":false});

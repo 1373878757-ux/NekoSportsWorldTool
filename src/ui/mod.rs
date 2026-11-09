@@ -9,6 +9,8 @@
 
 pub mod about;
 pub mod ai;
+mod checkpoint_jobs;
+mod checkpoints;
 pub mod data;
 pub mod device;
 pub mod fonts;
@@ -110,6 +112,8 @@ pub struct App {
     interactive: bool,
     #[cfg(test)]
     route_fixture: Option<(String, std::path::PathBuf)>,
+    #[cfg(test)]
+    route_overpass_fixture: Option<(String, std::time::Duration)>,
     pub session_epoch: u64,
     pub auth_guard: Arc<std::sync::atomic::AtomicBool>,
     auth_tx: Sender<crate::api::client::AuthFailure>,
@@ -152,6 +156,10 @@ pub struct App {
     /// 已加载的 OSM 路网（真实道路路由 + 地图显示共用）。
     pub network: Option<Arc<route_planner::RoadGraph>>,
     pub osm_page: osm::OsmPage,
+    pub checkpoints: checkpoint_jobs::CheckpointLayerState,
+    pub boundary: checkpoint_jobs::BoundaryLayerState,
+    layer_tx: WakeSender<checkpoint_jobs::LayerLoad>,
+    layer_rx: Receiver<checkpoint_jobs::LayerLoad>,
     net_tx: WakeSender<osm::NetworkLoad>,
     net_rx: Receiver<osm::NetworkLoad>,
     preview_tx: WakeSender<preview_jobs::PreviewResult>,
@@ -447,6 +455,7 @@ impl App {
     ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let (net_tx, net_rx) = std::sync::mpsc::channel();
+        let (layer_tx, layer_rx) = std::sync::mpsc::channel();
         let (preview_tx, preview_rx) = std::sync::mpsc::channel();
         let device_buf = identity.clone();
         let username = config.username.clone();
@@ -459,6 +468,8 @@ impl App {
             interactive: true,
             #[cfg(test)]
             route_fixture: None,
+            #[cfg(test)]
+            route_overpass_fixture: None,
             session_epoch: 0,
             auth_guard: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             auth_tx,
@@ -526,6 +537,13 @@ impl App {
                 path: config.osm_path.clone(),
                 ..Default::default()
             },
+            checkpoints: checkpoint_jobs::CheckpointLayerState::default(),
+            boundary: checkpoint_jobs::BoundaryLayerState::default(),
+            layer_tx: WakeSender {
+                sender: layer_tx,
+                ctx: ctx.clone(),
+            },
+            layer_rx,
             net_tx: WakeSender {
                 sender: net_tx,
                 ctx: ctx.clone(),
@@ -569,6 +587,7 @@ impl App {
         if crate::runtime::offline() {
             self.ip = "离线".into();
             self.status = crate::runtime::OFFLINE_MESSAGE.into();
+            self.refresh_checkpoint_layer();
         } else {
             match self.config.update_check.as_str() {
                 "off" => {}
@@ -581,6 +600,9 @@ impl App {
                 self.refresh_records();
                 self.refresh_user_page();
                 self.refresh_ai_list();
+                if self.run_page.route_mode != crate::track::generate_road::RouteMode::Road {
+                    self.refresh_checkpoint_layer();
+                }
                 if self.config.osm_path.is_empty() {
                     self.refresh_points();
                 }
@@ -623,6 +645,7 @@ impl App {
     }
 
     fn renew_session_jobs(&mut self) {
+        self.clear_checkpoint_scope();
         self.data_page.cheat = None;
         self.data_page.cheat_error = None;
         self.data_page.cheat_checking = false;
@@ -639,3 +662,6 @@ impl App {
 
 #[cfg(test)]
 mod layout_tests;
+
+#[cfg(test)]
+mod checkpoint_integration_tests;

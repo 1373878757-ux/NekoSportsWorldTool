@@ -150,7 +150,7 @@ pub(crate) fn initialize() -> Result<InitialState, StartupError> {
         .lock()
         .map_err(|_| StartupError("本地初始化锁异常，请退出后重试".into()))?;
     let root = crate::platform::try_data_dir().map_err(StartupError)?;
-    let legacy = if std::env::var_os("NSWT_DATA_DIR").is_none() {
+    let legacy = if !crate::runtime::offline() && std::env::var_os("NSWT_DATA_DIR").is_none() {
         std::env::current_exe()
             .ok()
             .and_then(|value| value.parent().map(Path::to_path_buf))

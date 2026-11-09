@@ -50,23 +50,33 @@ impl MapState {
     }
     /// 依据一组点（lat, lon）自动适配视野。
     pub fn fit(&mut self, rect: Rect, pts: &[(f64, f64)]) {
-        if pts.len() < 2 {
+        let pts: Vec<_> = pts
+            .iter()
+            .copied()
+            .filter(|(lat, lon)| {
+                lat.is_finite() && lon.is_finite() && lat.abs() <= 90.0 && lon.abs() <= 180.0
+            })
+            .collect();
+        if pts.is_empty() {
             return;
         }
-        let (mut slat, mut slon) = (0.0f64, 0.0f64);
-        for (la, lo) in pts {
-            slat += *la;
-            slon += *lo;
-        }
-        let n = pts.len() as f64;
-        self.center = (slat / n, slon / n);
+        let latitude = pts.iter().map(|point| point.0);
+        let longitude = pts.iter().map(|point| point.1);
+        self.center = (
+            (latitude.clone().fold(f64::INFINITY, f64::min)
+                + latitude.fold(f64::NEG_INFINITY, f64::max))
+                * 0.5,
+            (longitude.clone().fold(f64::INFINITY, f64::min)
+                + longitude.fold(f64::NEG_INFINITY, f64::max))
+                * 0.5,
+        );
         let (mut minx, mut maxx, mut miny, mut maxy) = (
             f64::INFINITY,
             f64::NEG_INFINITY,
             f64::INFINITY,
             f64::NEG_INFINITY,
         );
-        for (la, lo) in pts {
+        for (la, lo) in &pts {
             let x = (lo - self.center.1) * MET_PER_DEG_LNG;
             let y = (la - self.center.0) * MET_PER_DEG_LAT;
             minx = minx.min(x);
@@ -80,6 +90,19 @@ impl MapState {
         let sy = rect.height() as f64 / h;
         self.scale = ((sx.min(sy)) * 0.92) as f32;
         self.offset = Vec2::ZERO;
+    }
+
+    /// Shared pan/zoom operations keep every layer in the same screen transform.
+    pub fn pan(&mut self, delta: Vec2) {
+        if delta.is_finite() {
+            self.offset += delta;
+        }
+    }
+
+    pub fn zoom(&mut self, scroll: f32) {
+        if scroll.is_finite() {
+            self.scale = (self.scale * (scroll * 0.0015).exp()).clamp(0.002, 200.0);
+        }
     }
 
     /// 度坐标 → 屏幕坐标。
@@ -107,12 +130,11 @@ impl MapState {
         });
         if drag {
             let d = ui.input(|i| i.pointer.delta());
-            self.offset += d;
+            self.pan(d);
             self.dragged = true;
         }
         if scroll != 0.0 {
-            let factor = (scroll * 0.0015).exp() as f32;
-            self.scale = (self.scale * factor).clamp(0.002, 200.0);
+            self.zoom(scroll);
         }
     }
 
@@ -244,4 +266,57 @@ pub fn legend(ui: &mut egui::Ui, items: &[(&str, Color32)]) {
             ui.label(*label);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn canvas() -> Rect {
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 240.0))
+    }
+
+    #[test]
+    fn fit_single_checkpoint_centers_without_zero_scale() {
+        let mut map = MapState::default();
+        let point = (28.2, 112.9);
+        map.fit(canvas(), &[point]);
+        assert_eq!(map.center, point);
+        assert!(map.scale.is_finite() && map.scale > 0.0);
+        assert_eq!(map.to_screen(canvas(), point.0, point.1), canvas().center());
+    }
+
+    #[test]
+    fn fit_keeps_all_valid_points_inside_the_canvas() {
+        let mut map = MapState::default();
+        // Deliberately asymmetric density: an arithmetic-mean center clips the outlier.
+        let points = [
+            (28.2, 112.9),
+            (28.2, 112.9),
+            (28.2, 112.9),
+            (28.203, 112.904),
+        ];
+        map.fit(canvas(), &points);
+        for (lat, lon) in points {
+            assert!(canvas().contains(map.to_screen(canvas(), lat, lon)));
+        }
+    }
+
+    #[test]
+    fn pan_moves_layers_together_and_zoom_scales_about_center() {
+        let mut map = MapState::default();
+        map.fit(canvas(), &[(28.2, 112.9)]);
+        let point = (28.2001, 112.9001);
+        let before = map.to_screen(canvas(), point.0, point.1);
+        let delta = Vec2::new(32.0, -12.0);
+        map.pan(delta);
+        assert!((map.to_screen(canvas(), point.0, point.1) - before - delta).length() < 0.001);
+        let old_scale = map.scale;
+        let center = canvas().center() + map.offset;
+        let distance = map.to_screen(canvas(), point.0, point.1) - center;
+        map.zoom(100.0);
+        let expected = distance * (map.scale / old_scale);
+        assert!((map.to_screen(canvas(), point.0, point.1) - center - expected).length() < 0.001);
+        assert_eq!(map.center, (28.2, 112.9));
+    }
 }

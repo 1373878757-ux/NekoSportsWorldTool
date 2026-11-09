@@ -21,7 +21,9 @@ impl Drop for FixtureDir {
     }
 }
 
-pub(super) fn mock_school(responses: Vec<(&'static str, Value)>) -> (String, std::thread::JoinHandle<usize>) {
+pub(crate) fn mock_school(
+    responses: Vec<(&'static str, Value)>,
+) -> (String, std::thread::JoinHandle<usize>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let host = format!("http://{}", listener.local_addr().unwrap());
@@ -158,12 +160,12 @@ fn string_data_http_refresh_reaches_a_complete_campus_preview() {
             json!({"error":10000,"data":fence.to_string()}),
         ),
         (
-            crate::api::policy::POLICY_PATH,
-            json!({"error":10000,"data":policy.to_string()}),
-        ),
-        (
             crate::api::points::POINTS_PATH,
             json!({"error":10000,"data":points.to_string()}),
+        ),
+        (
+            crate::api::policy::POLICY_PATH,
+            json!({"error":10000,"data":policy.to_string()}),
         ),
     ]);
     let ctx = egui::Context::default();
@@ -327,12 +329,12 @@ fn explicit_null_boundary_refreshes_points_and_repeats_one_road_loop() {
             json!({"error":10000,"data":{"geoFences":null}}),
         ),
         (
-            crate::api::policy::POLICY_PATH,
-            json!({"error":10000,"data":{"timestamp":123,"policy":1,"mustPoints":[]}}),
-        ),
-        (
             crate::api::points::POINTS_PATH,
             json!({"error":10000,"data":{"pointsResModels":live}}),
+        ),
+        (
+            crate::api::policy::POLICY_PATH,
+            json!({"error":10000,"data":{"timestamp":123,"policy":1,"mustPoints":[]}}),
         ),
     ]);
     let ctx = egui::Context::default();
@@ -372,12 +374,17 @@ fn explicit_null_boundary_refreshes_points_and_repeats_one_road_loop() {
 }
 
 #[test]
-fn empty_boundary_fetches_policy_before_any_point_scoped_download() {
+fn empty_boundary_fetches_and_publishes_points_before_policy_failure() {
     let root = FixtureDir::new();
+    let live = vec![wire_point(39.9, 116.4)];
     let (host, server) = mock_school(vec![
         (
             crate::api::fence::FENCE_PATH,
             json!({"error":10000,"data":{"geoFences":[]}}),
+        ),
+        (
+            crate::api::points::POINTS_PATH,
+            json!({"error":10000,"data":{"pointsResModels":live}}),
         ),
         (
             crate::api::policy::POLICY_PATH,
@@ -389,7 +396,7 @@ fn empty_boundary_fetches_policy_before_any_point_scoped_download() {
     app.config.osm_path.clear();
     app.refresh_school_route(false);
     wait_for_refresh(&mut app);
-    assert_eq!(server.join().unwrap(), 2);
+    assert_eq!(server.join().unwrap(), 3);
     assert!(
         app.osm_page.status.contains("11016"),
         "{}",
@@ -397,6 +404,14 @@ fn empty_boundary_fetches_policy_before_any_point_scoped_download() {
     );
     assert!(app.network.is_none());
     assert!(app.run_page.preview_inputs.is_none());
+    assert_eq!(app.checkpoints.data.stats.raw, 1);
+    assert_eq!(app.checkpoints.data.stats.valid, 1);
+    assert_eq!(app.checkpoints.data.coordinates().len(), 1);
+    assert!(
+        app.run_page.preview.is_none(),
+        "policy failure must keep business preview unavailable"
+    );
+    assert!(!app.run_busy, "refresh must not submit a sports record");
 }
 
 fn base_map_app(root: &FixtureDir, ctx: &egui::Context) -> App {
@@ -503,6 +518,8 @@ fn run_base_map_can_pan_zoom_and_refit_a_reloaded_map() {
     let canvas = output
         .shapes
         .iter()
+        // The independent WGS84 checkpoint overview is drawn before the route/base map.
+        .rev()
         .find_map(|shape| match &shape.shape {
             egui::Shape::Rect(rect)
                 if rect.fill == theme::map_background()

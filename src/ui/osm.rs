@@ -92,6 +92,9 @@ impl App {
     fn draw_osm_contents(&mut self, ui: &mut egui::Ui) {
         let mut load_now = false;
 
+        self.draw_checkpoint_controls(ui);
+        ui.separator();
+
         ui.label("按学校围栏或当前点位获取路网；多出的里程沿同一道路闭环重复。");
         let school = self
             .session
@@ -215,9 +218,15 @@ impl App {
         }
 
         ui.add_space(4.0);
-        if self.network.is_some() {
-            super::map::legend(ui, &[("道路", theme::road()), ("建筑", theme::building())]);
-        }
+        super::map::legend(
+            ui,
+            &[
+                ("道路", theme::road()),
+                ("建筑", theme::building()),
+                ("平台打卡点", egui::Color32::from_rgb(240, 180, 0)),
+                ("校园围栏", egui::Color32::from_rgb(180, 118, 0)),
+            ],
+        );
         let rect = ui.available_rect_before_wrap();
         let (response, painter) = ui.allocate_painter(
             egui::Vec2::new(
@@ -228,23 +237,13 @@ impl App {
                     400.0
                 },
             ),
-            egui::Sense::drag(),
+            egui::Sense::click_and_drag(),
         );
         let canvas = response.rect;
-        let fences = self
-            .run_page
-            .preview_inputs
-            .as_ref()
-            .map(|i| i.fences.clone())
-            .or_else(|| {
-                self.osm_page
-                    .campuses
-                    .iter()
-                    .find(|c| c.key == self.osm_page.selected_key)
-                    .map(|c| c.polygons.clone())
-            })
-            .unwrap_or_default();
-        let display_fences: Vec<Vec<(f64, f64)>> = fences
+        // Boundary and checkpoint layers do not depend on PreviewInputs or a road result.
+        let display_fences: Vec<Vec<(f64, f64)>> = self
+            .boundary
+            .fences
             .iter()
             .map(|f| {
                 f.iter()
@@ -252,8 +251,13 @@ impl App {
                     .collect()
             })
             .collect();
-        if !self.osm_page.fitted && (!display_fences.is_empty() || self.osm_page.gpx.is_some()) {
-            let mut bounds: Vec<_> = display_fences.iter().flatten().copied().collect();
+        if !self.osm_page.fitted
+            && (!display_fences.is_empty()
+                || self.osm_page.gpx.is_some()
+                || self.checkpoints.data.stats.valid > 0)
+        {
+            let mut bounds = self.checkpoints.data.coordinates();
+            bounds.extend(display_fences.iter().flatten().copied());
             if let Some(gpx) = &self.osm_page.gpx {
                 bounds.extend(gpx.segments.iter().flatten().copied());
             }
@@ -277,14 +281,27 @@ impl App {
             }
         }
 
+        super::checkpoints::fit_checkpoint_view(
+            &mut self.osm_page.map,
+            canvas,
+            &self.checkpoints.data.points,
+            self.checkpoints.selected.as_deref(),
+            &mut self.checkpoints.fit_all,
+            &mut self.checkpoints.focus,
+        );
+        self.osm_page.map.interact(ui, canvas);
+
         painter.rect_filled(canvas, egui::Rounding::ZERO, theme::map_background());
         if let Some(net) = &self.network {
             self.osm_page.map.draw_network(&painter, canvas, net);
-        } else {
+        } else if self.checkpoints.data.stats.valid == 0
+            && display_fences.is_empty()
+            && self.osm_page.gpx.is_none()
+        {
             painter.text(
                 canvas.center(),
                 egui::Align2::CENTER_CENTER,
-                "加载 OSM 路网后可预览道路与建筑",
+                "道路图层未加载；合法打卡点缓存可独立显示",
                 egui::FontId::proportional(14.0),
                 egui::Color32::from_rgb(150, 160, 156),
             );
@@ -320,7 +337,16 @@ impl App {
                     .draw_point(&painter, canvas, lat, lon, egui::Color32::RED, 4.);
             }
         }
-        self.osm_page.map.interact(ui, canvas);
+        let layout = super::checkpoints::draw_checkpoint_markers(
+            &self.osm_page.map,
+            &painter,
+            &response,
+            &self.checkpoints.data.points,
+            &mut self.checkpoints.selected,
+            &mut self.checkpoints.focus,
+        );
+        super::checkpoints::draw_render_counts(ui, self.checkpoints.data.stats.valid, &layout);
+        self.draw_checkpoint_details(ui);
 
         if load_now {
             let path = self.osm_page.path.clone();

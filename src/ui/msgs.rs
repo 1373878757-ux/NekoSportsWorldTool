@@ -10,6 +10,7 @@ use chrono::TimeZone;
 
 impl App {
     fn expire_road_session(&mut self) {
+        self.clear_checkpoint_scope();
         self.session_epoch = self.session_epoch.wrapping_add(1);
         self.auth_guard
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -78,6 +79,7 @@ impl App {
     }
 
     pub(crate) fn poll_messages(&mut self) {
+        self.poll_checkpoint_results();
         self.poll_preview_results();
         let mut done_ip = None;
         let mut done_login = None;
@@ -236,11 +238,13 @@ impl App {
                         .map(|s| s.school == session.unid && s.key == self.osm_page.selected_key)
                         .unwrap_or(false);
                     if !keep {
-                        self.config.school_campus = Some(crate::api::campus::Selection {
+                        let selection = crate::api::campus::Selection {
                             school: session.unid.clone(),
                             key: self.osm_page.selected_key.clone(),
                             confirmed: false,
-                        });
+                        };
+                        self.adopt_checkpoint_campus(&selection);
+                        self.config.school_campus = Some(selection);
                     }
                 }
             }
