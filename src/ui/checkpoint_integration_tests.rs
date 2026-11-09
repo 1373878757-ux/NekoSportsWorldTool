@@ -109,6 +109,7 @@ fn mock_overpass(
                 Err(e) => panic!("{e}"),
             }
         };
+        socket.set_nonblocking(false).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
@@ -210,6 +211,7 @@ fn mock_school_paused_points(
                     Err(error) => panic!("fixture accept: {error}"),
                 }
             };
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
