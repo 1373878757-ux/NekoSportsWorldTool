@@ -458,7 +458,7 @@ fn manual_osm_button_loads_without_login_and_draws_roads_with_visible_status() {
         app.poll_messages();
         assert!(!app.osm_page.busy);
         assert_eq!(app.network.as_ref().unwrap().graph.node_count(), 4);
-        let status = app.osm_page.status.clone();
+        let status = crate::road_status::map_summary(&app.osm_page.status);
         let output = frame(&mut app, &ctx, w, h, vec![]);
         assert!(
             label_position(&output, &status).is_some(),
