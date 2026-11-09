@@ -65,7 +65,7 @@ macOS 与 Windows 共用上述路网代码，没有新增平台专属网络、�
 | `cargo fmt --all -- --check` | 退出 1。对 HEAD 只读导出后执行同一检查：基线与当前均为 26 个失败文件，没有新增失败文件。没有整体格式化无关文件。 |
 | `git diff --check` | 通过。 |
 | Mac 单元测试及 GUI 测试 | 按用户要求，本轮不执行；既有 242 项根库、8 项 route-planner 单测、7 项集成测试为前序基线记录，不冒充本轮结果。 |
-| Windows 自动化测试与发行 ZIP | 待现有 Actions 完成后在交付记录中补充真实结果。 |
+| Windows 自动化测试与发行 ZIP | Run `42625859386` 成功；GUI 配置根库 248 项、CLI-only 根库 158 项；两种配置的路由单测均 9 项、集成均 7 项通过。发行 ZIP 已下载并核验。 |
 
 新增测试涵盖：原始/筛选后 highway 计数、ways 先于 nodes、502 错误摘要和单次请求、超时分类、XML 错误/空道路/缺失节点分层、围栏裁剪前后计数、未改变返回 WGS84 坐标、无效路网不落盘、离线禁止传输、城市已改但锚点未改、空城市/无效坐标与无关设备修改兼容性。现有缓存复用与点位独立显示测试继续保留。
 
@@ -79,4 +79,15 @@ macOS 与 Windows 共用上述路网代码，没有新增平台专属网络、�
 
 ## 交付记录
 
-源码提交、Mac 构建 SHA-256、Windows Run ID、ZIP SHA-256 与完整测试结果将在实际完成后补入此节。不创建公开 Release。
+- 源码提交：`8f1a0753b91975c2968ed3cccdf06884b84550b7`，已推送到用户 Fork 的既有开发分支。
+- Mac release 编译成功；安装位置：`/Users/mac/Applications/NekoSportsWorldTool.app`。实际为 arm64，完成本地 ad-hoc 签名与 `codesign --verify --deep --strict` 文件校验；没有 Developer ID 签名或公证。本轮没有执行 Mac GUI 或 CLI 测试。
+- Mac 可执行文件 SHA-256：`db70b531e1f152ae8d0b06b3e0b1d146449ca2bcf7dd94e072f7d70500be7b8a`。
+- Mac ZIP：`/Users/mac/Desktop/run fasting/verification/map-device-diagnostics-20261109/NekoSportsWorldTool-0.3.1-macOS-arm64-diagnostics.zip`，SHA-256：`70f123d817524821a34d1d08e6146b21d3749ed0877d50761d8113bb9aeb8a14`。
+- 当前运行中的旧进程未重启；用户退出并重开应用后使用该提交。
+- Windows Actions Run：`42625859386`，对应上述代码提交，沿用 `windows-build.yml`，结论 `success`。GUI/CLI 检查、两种 feature 配置的 workspace 单测、Clippy、release、打包和 CLI/package smoke 均通过。
+- Windows 测试数量：默认 GUI 配置根 crate 248、route-planner 9 单测与 7 集成测试；CLI-only 根 crate 158、route-planner 9 单测与 7 集成测试。均为 0 失败。没有账户登录或运动记录提交测试。
+- Windows ZIP：`/Users/mac/Desktop/run fasting/verification/map-device-diagnostics-20261109/windows-actions-42625859386/NekoSportsWorldTool-J-claude-Windows-x64.zip`。
+- Windows ZIP SHA-256：`90037d77a97a5e3e2d90635b773e3f3f3ebf6c48a5aacda06e8f750c647f0f46`；与 runner 输出一致；ZIP CRC 及内部 538 项 checksum 均通过，共 539 个文件，保留 LICENSE 和 THIRD-PARTY-NOTICES。
+- Windows EXE SHA-256：`9828efc8a6ed5233b37933b3912e3e932f1677707dba70eb3fc90c380a6576ff`。包内版本 0.3.1、目标 `x86_64-pc-windows-msvc`、完整开发署名与源码提交匹配。
+- Runner 的 GUI smoke 明确为 `unavailable_missing_opengl_2_context`；Windows 10/11 实机窗口、显示/缩放和在线地图仍待用户完成，不能把构建成功标记为实机通过。
+- 未创建公开 Release；保护的四个已有工作区文件 SHA-256 均保持原值。
