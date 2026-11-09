@@ -90,11 +90,6 @@ impl HeaderIdentity {
                 )
             });
         }
-        if city == crate::location::default_city() {
-            return Some(
-                "城市仍是内置默认值“大连市”；请在设备信息页核对当前城市和定位锚点。".into(),
-            );
-        }
         None
     }
 
@@ -385,7 +380,7 @@ mod tests {
             anchor_lon: 121.614,
             ..Default::default()
         };
-        assert!(configured_dalian.has_unconfigured_default_location());
+        assert!(!configured_dalian.has_unconfigured_default_location());
     }
 
     #[test]

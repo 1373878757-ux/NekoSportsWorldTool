@@ -3,6 +3,7 @@
 
 use super::{mobile, theme, App};
 use crate::crypto::header::HeaderIdentity;
+use crate::location_acquisition::{BrowserLocationRequest, LocationFix};
 use eframe::egui;
 
 const IOS_OS_POOL: [&str; 5] = ["17.5.1", "18.0.1", "18.1", "18.2", "26.5.2"];
@@ -16,6 +17,17 @@ const ANDROID_OS_POOL: [&str; 4] = ["12", "13", "14", "15"];
 pub struct DevicePage {
     saved_flash: f32,
     save_error: Option<String>,
+    location_request: Option<BrowserLocationRequest>,
+    location_snapshot: Option<(f64, f64)>,
+    location_notice: Option<(String, bool)>,
+    location_fix: Option<LocationFix>,
+}
+
+impl DevicePage {
+    fn cancel_location(&mut self) {
+        self.location_request = None;
+        self.location_snapshot = None;
+    }
 }
 
 impl App {
@@ -24,7 +36,121 @@ impl App {
         crate::api::model::save_identity(&self.device_buf)?;
         // Commit runtime identity only after the original persistence operation succeeds.
         self.identity = self.device_buf.clone();
+        self.device_page.cancel_location();
         Ok(())
+    }
+
+    pub(super) fn poll_device_location(&mut self) {
+        let result = self
+            .device_page
+            .location_request
+            .as_ref()
+            .and_then(BrowserLocationRequest::try_result);
+        if let Some(result) = result {
+            self.device_page.location_request = None;
+            self.finish_device_location(result);
+        }
+    }
+
+    fn finish_device_location(&mut self, result: Result<LocationFix, String>) {
+        let Some((latitude, longitude)) = self.device_page.location_snapshot.take() else {
+            return;
+        };
+        let result = result.and_then(|fix| Ok((fix, fix.platform_coordinate()?)));
+        match result {
+            Ok((fix, coordinate)) => {
+                if latitude.to_bits() != self.device_buf.anchor_lat.to_bits()
+                    || longitude.to_bits() != self.device_buf.anchor_lon.to_bits()
+                {
+                    self.device_page.location_notice = Some((
+                        "定位期间坐标已有手动修改，已保留你的输入；需要时可重新获取当前位置"
+                            .into(),
+                        true,
+                    ));
+                    return;
+                }
+                self.device_buf.anchor_lat = coordinate.latitude;
+                self.device_buf.anchor_lon = coordinate.longitude;
+                self.device_page.location_fix = Some(fix);
+                self.device_page.save_error = None;
+                self.device_page.location_notice = Some((
+                    "已回填当前位置，请核对城市名称与定位精度，点击“保存”生效".into(),
+                    false,
+                ));
+            }
+            Err(error) => self.device_page.location_notice = Some((error, true)),
+        }
+    }
+
+    fn draw_location_controls(&mut self, ui: &mut egui::Ui, page: &mut DevicePage) {
+        ui.add_space(8.0);
+        let offline = crate::runtime::offline();
+        mobile::row(ui, |ui| {
+            if ui
+                .add_enabled(
+                    !offline && page.location_request.is_none(),
+                    egui::Button::new("获取当前位置"),
+                )
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                match BrowserLocationRequest::start(move || ctx.request_repaint()) {
+                    Ok(request) => {
+                        page.location_snapshot =
+                            Some((self.device_buf.anchor_lat, self.device_buf.anchor_lon));
+                        page.location_notice = Some((
+                            "请在默认浏览器打开的本机定位页中点击授权，获取结果后返回软件".into(),
+                            false,
+                        ));
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(request.url()));
+                        page.location_request = Some(request);
+                    }
+                    Err(error) => page.location_notice = Some((error, true)),
+                }
+            }
+            if let Some(request) = &page.location_request {
+                ui.label("等待定位授权…");
+                ui.hyperlink_to("重新打开定位页", request.url());
+                if ui.button("取消定位").clicked() {
+                    page.cancel_location();
+                    page.location_notice = Some(("定位已取消".into(), false));
+                }
+            }
+        });
+        if offline {
+            ui.colored_label(theme::text_dim(), "离线模式下请手动填写城市与坐标。");
+        } else {
+            ui.colored_label(
+                theme::text_dim(),
+                "通过默认浏览器授权本机定位；换地点后可再次获取。定位后请核对城市名称并保存。",
+            );
+        }
+        if let Some((notice, error)) = &page.location_notice {
+            ui.colored_label(
+                if *error { theme::warn() } else { theme::text_dim() },
+                notice,
+            );
+        }
+        if let Some(fix) = page.location_fix {
+            if fix.platform_coordinate().is_ok_and(|coordinate| {
+                (coordinate.latitude - self.device_buf.anchor_lat).abs() < 1e-9
+                    && (coordinate.longitude - self.device_buf.anchor_lon).abs() < 1e-9
+            }) {
+                ui.colored_label(
+                    if fix.wgs84.accuracy > 1000.0 {
+                        theme::warn()
+                    } else {
+                        theme::text_dim()
+                    },
+                    format!(
+                        "定位来源：浏览器定位（WGS84），精度约 ±{:.0} 米；输入框已转换为 BD-09。",
+                        fix.wgs84.accuracy
+                    ),
+                );
+            } else {
+                page.location_fix = None;
+            }
+        }
     }
     #[cfg(target_os = "android")]
     pub(super) fn poll_device_info(&mut self) {
@@ -149,10 +275,15 @@ impl App {
                 });
         }
 
+        self.draw_location_controls(ui, page);
         ui.add_space(4.0);
         ui.colored_label(
             theme::text_dim(),
             "定位锚点填写顺序：先填纬度，再填经度；地图常见的“经度,纬度”格式需要调换后填写。",
+        );
+        ui.colored_label(
+            theme::text_dim(),
+            "手动填写使用 BD-09 坐标；“获取当前位置”会自动转换浏览器返回的 WGS84 坐标。",
         );
         ui.colored_label(
             theme::text_dim(),
@@ -187,9 +318,14 @@ impl App {
             if ui.add(theme::primary_btn("保存")).clicked() {
                 match self.save_device_settings() {
                     Ok(()) => {
+                        page.cancel_location();
+                        page.location_notice = Some((
+                            "设备信息已保存，换地点后可重新获取位置并保存".into(),
+                            false,
+                        ));
                         page.save_error = None;
                         self.status = "√ 设备身份已保存并生效".into();
-                        self.log.push("√  已更新（新设备 ID 从下个请求开始生效）");
+                        self.log.push("√  设备信息已保存，后续请求使用已保存配置");
                         page.saved_flash = 2.0;
                     }
                     Err(e) => {
@@ -199,6 +335,9 @@ impl App {
                 }
             }
             if ui.button("撤销修改").clicked() {
+                page.cancel_location();
+                page.location_fix = None;
+                page.location_notice = None;
                 self.device_buf = self.identity.clone();
                 page.save_error = None;
             }
@@ -398,6 +537,77 @@ mod tests {
         pending = saved.clone();
         pending.anchor_lat += 0.000001;
         assert!(location_fields_changed(&saved, &pending));
+    }
+
+    fn acquired_fix(latitude: f64, longitude: f64) -> LocationFix {
+        LocationFix {
+            wgs84: crate::location::Coordinate::new(latitude, longitude, 12.0).unwrap(),
+            observed_at_ms: 1_799_999_999_000,
+        }
+    }
+
+    #[test]
+    fn acquired_position_is_pending_until_explicit_save_and_can_change_cities() {
+        let isolated = IsolatedConfig::new();
+        let mut app = offline_app();
+        let original = app.identity.clone();
+        for (city, lat, lon) in [("哈尔滨市", 45.75, 126.63), ("大连市", 38.914, 121.614)] {
+            let saved_before = app.identity.clone();
+            let disk_before = std::fs::read(isolated.root.join("identity.json")).ok();
+            app.device_buf.city = city.into();
+            app.device_page.location_snapshot =
+                Some((app.device_buf.anchor_lat, app.device_buf.anchor_lon));
+            let fix = acquired_fix(lat, lon);
+            app.finish_device_location(Ok(fix));
+            assert_eq!(
+                app.device_buf.anchor_lat,
+                fix.platform_coordinate().unwrap().latitude
+            );
+            assert_eq!(app.device_buf.device_id, original.device_id);
+            assert_eq!(app.identity, saved_before);
+            assert_eq!(
+                std::fs::read(isolated.root.join("identity.json")).ok(),
+                disk_before
+            );
+            app.save_device_settings().unwrap();
+            assert_eq!(crate::api::model::load_identity(), app.identity);
+            assert_eq!(app.identity.city, city);
+        }
+        assert!(!isolated.root.join("session.json").exists());
+        assert!(!isolated.root.join("submission_receipts").exists());
+    }
+
+    #[test]
+    fn failed_cancelled_and_late_location_results_preserve_manual_input_and_saved_identity() {
+        let _isolated = IsolatedConfig::new();
+        let mut app = offline_app();
+        let original = app.identity.clone();
+        app.device_page.location_snapshot =
+            Some((app.device_buf.anchor_lat, app.device_buf.anchor_lon));
+        app.finish_device_location(Err("定位权限被拒绝".into()));
+        assert_eq!(app.device_buf, original);
+        assert_eq!(app.identity, original);
+
+        app.device_page.location_snapshot =
+            Some((app.device_buf.anchor_lat, app.device_buf.anchor_lon));
+        app.device_buf.anchor_lat += 0.01;
+        let edited = app.device_buf.clone();
+        app.finish_device_location(Ok(acquired_fix(45.75, 126.63)));
+        assert_eq!(app.device_buf, edited);
+        assert!(app
+            .device_page
+            .location_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("手动修改"));
+
+        app.device_page.location_snapshot =
+            Some((app.device_buf.anchor_lat, app.device_buf.anchor_lon));
+        app.device_page.cancel_location();
+        app.finish_device_location(Ok(acquired_fix(45.75, 126.63)));
+        assert_eq!(app.device_buf, edited);
+        assert_eq!(app.identity, original);
     }
 
     #[test]

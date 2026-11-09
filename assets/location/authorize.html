@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{APP_NAME}} · 获取当前位置</title>
+<style nonce="{{NONCE}}">
+  :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0B0D12; color: #E8ECFA; }
+  main { max-width: 32rem; margin: 1.5rem; padding: 2rem; border: 1px solid #30364B; border-radius: 1rem; background: #141824; }
+  h1 { font-size: 1.5rem; margin-top: 0; }
+  p { line-height: 1.75; }
+  button { padding: .75rem 1.25rem; border: none; border-radius: .5rem; background: #8B9EFF; color: #0B0D12; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: wait; }
+  #status { white-space: pre-line; }
+  .dim { color: #B6BED4; font-size: .9rem; }
+</style>
+<main>
+  <h1>获取当前位置</h1>
+  <p>点击下方按钮，在浏览器提示中允许定位。获取的坐标将回填到软件的“设备信息”页面，供你核对城市并保存。</p>
+  <button id="locate" type="button">授权并获取当前位置</button>
+  <p id="status" role="status" aria-live="polite">等待你的操作。</p>
+  <p class="dim">此页面仅向本机软件回传定位结果。系统或浏览器的定位服务可能需要网络。请求有效期为两分钟；结束后可关闭此页面。</p>
+</main>
+<script nonce="{{NONCE}}">
+  "use strict";
+  const button = document.getElementById("locate");
+  const status = document.getElementById("status");
+  async function send(value, message) {
+    try {
+      const response = await fetch("./result", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        cache: "no-store",
+        credentials: "omit",
+        body: JSON.stringify(value)
+      });
+      if (!response.ok) throw new Error("callback rejected");
+      status.textContent = message + "\n请返回软件；此页面可以关闭。";
+    } catch (_) {
+      status.textContent = "本次定位请求已结束或软件已关闭。请返回软件，重新点击“获取当前位置”。";
+    }
+  }
+  button.addEventListener("click", () => {
+    button.disabled = true;
+    status.textContent = "正在等待定位授权和当前位置……";
+    if (!navigator.geolocation) {
+      void send({kind: "error", code: 0}, "当前浏览器不支持定位，可在软件中手动填写。");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      position => void send({
+        kind: "position",
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        timestamp_ms: Math.round(position.timestamp)
+      }, "定位结果已回传。请在软件中核对城市和定位精度，然后点击“保存”。"),
+      error => void send({kind: "error", code: error.code}, "本次定位未成功，软件中已显示原因。"),
+      {enableHighAccuracy: true, maximumAge: 0, timeout: 20000}
+    );
+  }, {once: true});
+</script>
+</html>

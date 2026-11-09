@@ -7,6 +7,8 @@ pub mod cli;
 mod crypto;
 mod diagnostics;
 pub mod location;
+#[cfg(feature = "gui")]
+mod location_acquisition;
 pub mod platform;
 pub mod presentation;
 mod relaunch;
