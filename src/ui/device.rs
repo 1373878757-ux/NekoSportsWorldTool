@@ -570,7 +570,14 @@ mod tests {
                 disk_before
             );
             app.save_device_settings().unwrap();
-            assert_eq!(crate::api::model::load_identity(), app.identity);
+            let mut reloaded = crate::api::model::load_identity();
+            // serde_json's default floating parser may differ by one ULP.
+            // Check coordinate precision separately and all identity fields exactly.
+            assert!((reloaded.anchor_lat - app.identity.anchor_lat).abs() < 1e-10);
+            assert!((reloaded.anchor_lon - app.identity.anchor_lon).abs() < 1e-10);
+            reloaded.anchor_lat = app.identity.anchor_lat;
+            reloaded.anchor_lon = app.identity.anchor_lon;
+            assert_eq!(reloaded, app.identity);
             assert_eq!(app.identity.city, city);
         }
         assert!(!isolated.root.join("session.json").exists());
