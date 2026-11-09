@@ -51,11 +51,21 @@
 | 修改后 CLI-only check | 通过 |
 | `cargo clippy --all-targets --locked` | 通过；新定位模块与设备页未产生 Clippy 警告 |
 | `cargo fmt --all -- --check` | 基线即失败于 26 个文件；修改后仍为相同的 26 个文件，新模块已单独格式化 |
-| Windows 合成数据与回环测试 | 等待现有 Actions 执行 |
-| Windows x64 ZIP | 等待现有 Actions 构建 |
-| Mac 可执行文件更新 | 等待完成编译与文件签名检查 |
+| Windows 合成数据与回环测试 | Run `42641002955` 通过：GUI 根库 268；CLI-only 根库 161；两种配置 route-planner 均为 10 单元 + 7 集成测试 |
+| Windows x64 ZIP | 已生成并下载；ZIP CRC、538 项内部 SHA-256 和源码 Commit 核对通过，包内共 539 文件 |
+| Mac 可执行文件更新 | `bb6c198971bd` 已编译并更新；`codesign --verify --deep --strict` 通过；未启动应用 |
 | 浏览器授权与真实位置获取 | 待用户实机验证；编译和 Mock 回传不代表系统定位成功 |
 
-首轮 Windows Run `42640144938` 的 GUI 测试为 267 通过、1 失败。失败发生于新增保存/重读断言：经度 `121.62557785654927` 在默认 JSON 浮点解析后读为 `121.62557785654928`，差异约 `1.4e-14` 度。回归测试改为检查坐标误差小于 `1e-10` 度，同时继续逐字段精确核对其他身份信息；生产序列化、坐标数值与运动逻辑未为此修改。最终结果以后续完整 Actions 为准。
+首轮 Windows Run `42640144938` 的 GUI 测试为 267 通过、1 失败。失败发生于新增保存/重读断言：经度 `121.62557785654927` 在默认 JSON 浮点解析后读为 `121.62557785654928`，差异约 `1.4e-14` 度。回归测试改为检查坐标误差小于 `1e-10` 度，同时继续逐字段精确核对其他身份信息；生产序列化、坐标数值与运动逻辑未为此修改。修正后完整 Actions 通过。
+
+最终源码提交：`bb6c198971bd57372f70ce4762388183e1e2a710`；主要实现提交：`71a455e78617f1b5c0dbaf74d9002e2df4f85c6d`。Windows Actions Run：`42641002955`，结论 `success`。Windows 同时通过默认与 CLI-only `cargo check --locked`、工作区测试、GUI Clippy、CLI-only 发行编译及 `--help` / `--version` smoke，最终 GUI/CLI 合一发行包成功。
+
+新 ZIP：`/Users/mac/Desktop/run fasting/verification/location-settings-20261109/windows-actions-42641002955/NekoSportsWorldTool-J-claude-Windows-x64.zip`。
+
+ZIP SHA-256：`b6e70180e6784c855e19f35ef57a9f59ad799f872f908bacd687d7c70dcd9426`。
+
+Windows Runner GUI smoke 结果为 `unavailable_missing_opengl_2_context`，因此不能认定 Windows 实机界面通过。Mac 与 Windows 的浏览器授权、系统位置服务可用性、真实定位精度和回填体验均仍需用户实机确认。Windows 包为 `NotSigned`，无公开 Release。
 
 工作区原有 `.gitignore` 修改和三份未跟踪调查报告保留，SHA-256 已与修改前记录对比一致。构建日志存于任务证据目录 `verification/location-settings-20261109/`。
+
+Mac 安装位置：`/Users/mac/Applications/NekoSportsWorldTool.app`。可执行文件 SHA-256 为 `3fd1fdd6e22a2915f0306a33458f1c67fec3975e89c1962d3cfc20a1fde0b362`。签名为本地 ad-hoc，不代表 Developer ID 公证。旧应用备份位于任务证据目录 `mac-before-update/NekoSportsWorldTool.app`。安装过程仅替换应用可执行文件并重新签名，没有重启已运行进程或写入身份配置；需要退出旧窗口后重新打开应用才能加载新入口。
