@@ -105,6 +105,22 @@ fn parse(bytes: &[u8]) -> Result<RoadGraph, String> {
     Ok(net)
 }
 
+fn network_error(action: &str, error: &(dyn std::error::Error + 'static)) -> String {
+    // OS timeout messages are localized and differ between macOS and Windows.
+    // Preserve the diagnostic text, but classify the underlying I/O error.
+    let mut current = Some(error);
+    while let Some(source) = current {
+        if source
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
+        {
+            return format!("{action}超时：{error}");
+        }
+        current = source.source();
+    }
+    format!("{action}失败：{error}")
+}
+
 fn download(query: &str) -> Result<Vec<u8>, String> {
     crate::runtime::ensure_network_allowed()?;
     #[cfg(test)]
@@ -124,13 +140,13 @@ fn download(query: &str) -> Result<Vec<u8>, String> {
         .post(endpoint)
         .set("User-Agent", "NekoSportsWorldTool/0.3.0 (school-road-map)")
         .send_form(&[("data", query)])
-        .map_err(|e| format!("自动获取学校路网失败：{e}"))?;
+        .map_err(|e| network_error("自动获取学校路网", &e))?;
     let mut bytes = Vec::new();
     response
         .into_reader()
         .take(MAX_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("读取学校路网失败：{e}"))?;
+        .map_err(|e| network_error("读取学校路网", &e))?;
     Ok(bytes)
 }
 
@@ -525,9 +541,23 @@ mod tests {
         let _guard = LoopbackOverride::new(endpoint, Duration::from_millis(50));
         let started = std::time::Instant::now();
         let error = download("[out:xml];out;").unwrap_err();
-        assert!(error.contains("自动获取学校路网失败"), "{error}");
+        assert!(error.contains("自动获取学校路网超时"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(2));
         assert_eq!(server.join().unwrap(), 1);
+    }
+
+    #[test]
+    fn timeout_kind_does_not_depend_on_the_operating_system_message() {
+        let timeout: ureq::Error =
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "localized socket message").into();
+        let message = network_error("自动获取学校路网", &timeout);
+        assert!(message.starts_with("自动获取学校路网超时："));
+        assert!(message.contains("localized socket message"));
+        assert!(crate::road_status::explain(&message).starts_with("[网络超时]"));
+
+        let refused: ureq::Error =
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connection refused").into();
+        assert!(network_error("自动获取学校路网", &refused).starts_with("自动获取学校路网失败："));
     }
 
     #[test]

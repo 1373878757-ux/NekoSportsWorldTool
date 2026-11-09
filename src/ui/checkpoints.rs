@@ -244,7 +244,12 @@ impl App {
                 self.osm_page.status.clone()
             };
             ui.label(format!("道路：{roads}"));
-            ui.label(format!("围栏：{}", self.boundary.status));
+            let boundary = if self.boundary.status.is_empty() {
+                "未加载"
+            } else {
+                &self.boundary.status
+            };
+            ui.label(format!("围栏：{boundary}"));
             ui.label(if self.run_page.preview_busy {
                 "路线：生成中"
             } else if self.run_page.preview.is_some() {

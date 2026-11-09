@@ -327,12 +327,7 @@ fn cached_checkpoints_survive_real_502_timeout_and_empty_osm_with_or_without_bou
             let road_status = app.osm_page.status.to_ascii_lowercase();
             let status_matches = match label {
                 "502" => road_status.contains("502"),
-                "timeout" => {
-                    road_status.contains("超时")
-                        || road_status.contains("timeout")
-                        || road_status.contains("timed out")
-                        || road_status.contains("10060")
-                }
+                "timeout" => road_status.contains("[网络超时]"),
                 _ => app.osm_page.status.contains("可用"),
             };
             assert!(status_matches, "{}", app.osm_page.status);
