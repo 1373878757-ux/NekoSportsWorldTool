@@ -472,7 +472,7 @@ fn manual_osm_button_loads_without_login_and_draws_roads_with_visible_status() {
                 w,
                 h,
                 vec![
-                    Event::PointerMoved(Pos2::new(w / 2., h - 35.)),
+                    Event::PointerMoved(Pos2::new(w / 2., h - 70.)),
                     Event::MouseWheel {
                         unit: egui::MouseWheelUnit::Point,
                         delta: Vec2::new(0., -60.),
@@ -483,12 +483,15 @@ fn manual_osm_button_loads_without_login_and_draws_roads_with_visible_status() {
             drawn |= out.shapes.iter().any(|shape| match &shape.shape {
                 egui::Shape::Path(p) => {
                     p.stroke.color == egui::epaint::ColorMode::Solid(theme::road())
-                        && p.points
-                            .iter()
-                            .any(|point| shape.clip_rect.contains(*point))
+                        && Rect::from_points(&p.points).intersects(shape.clip_rect)
                 }
                 _ => false,
             });
+            // The import explanation can extend below the window. Give the
+            // outer scroll time to settle; wheel input over the footer is ignored.
+            for _ in 0..12 {
+                frame(&mut app, &ctx, w, h, vec![]);
+            }
         }
         assert!(drawn, "loaded roads are not visible at {w}x{h}");
         crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = None);
