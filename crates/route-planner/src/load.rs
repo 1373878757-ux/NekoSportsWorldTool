@@ -29,6 +29,16 @@ pub struct ParsedOsm {
     pub nodes: HashMap<u64, Coord>,
     pub roads: Vec<OsmRoad>,
     pub buildings: Vec<OsmBuilding>,
+    pub stats: OsmParseStats,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OsmParseStats {
+    pub parsed_nodes: usize,
+    pub ways: usize,
+    pub highway_ways: usize,
+    pub retained_road_ways: usize,
+    pub unresolved_road_node_refs: usize,
 }
 
 /// 不应被当作可跑步道路的 highway 值。
@@ -93,6 +103,7 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
     let mut nodes: HashMap<u64, Coord> = HashMap::new();
     let mut roads: Vec<OsmRoad> = Vec::new();
     let mut buildings: Vec<OsmBuilding> = Vec::new();
+    let mut stats = OsmParseStats::default();
 
     // 所有 way 的节点序列（供 relation 建筑外环回填）。
     let mut way_nodes: HashMap<u64, Vec<u64>> = HashMap::new();
@@ -125,6 +136,7 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
                         }
                     }
                     "way" => {
+                        stats.ways += 1;
                         cur_way = Some((attrs.id().unwrap_or(0), Vec::new(), Vec::new()));
                     }
                     "relation" => {
@@ -165,6 +177,9 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
                     "way" => {
                         if let Some((id, refs, tags)) = cur_way.take() {
                             way_nodes.insert(id, refs.clone());
+                            if tags.iter().any(|(k, _)| k == "highway") {
+                                stats.highway_ways += 1;
+                            }
                             let is_building =
                                 tags.iter().any(|(k, v)| k == "building" && v != "no");
                             if is_building && refs.len() >= 3 {
@@ -175,6 +190,7 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
                                 .map(|(_, v)| v.clone())
                             {
                                 if !is_motorized(&h) && refs.len() >= 2 {
+                                    stats.retained_road_ways += 1;
                                     let oneway = tags.iter().any(|(k, v)| {
                                         k == "oneway" && matches!(v.as_str(), "yes" | "true" | "1")
                                     });
@@ -238,10 +254,17 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
         }
     }
 
+    stats.parsed_nodes = nodes.len();
+    stats.unresolved_road_node_refs = roads
+        .iter()
+        .flat_map(|road| &road.node_refs)
+        .filter(|id| !nodes.contains_key(id))
+        .count();
     Ok(ParsedOsm {
         nodes,
         roads,
         buildings,
+        stats,
     })
 }
 
@@ -334,4 +357,31 @@ fn geo_haversine(a: Coord, b: Coord) -> f64 {
     let pa = geo::Point::new(a.lon, a.lat);
     let pb = geo::Point::new(b.lon, b.lat);
     pa.haversine_distance(&pb)
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    #[test]
+    fn raw_highway_counts_include_filtered_ways_and_resolve_late_nodes() {
+        let xml = br#"<osm>
+          <way id="1"><nd ref="1"/><nd ref="2"/><tag k="highway" v="footway"/></way>
+          <way id="2"><nd ref="1"/><nd ref="2"/><tag k="highway" v="motorway"/></way>
+          <way id="3"><nd ref="1"/><nd ref="2"/><nd ref="3"/><tag k="building" v="yes"/><tag k="highway" v="path"/></way>
+          <way id="4"><nd ref="1"/><tag k="highway" v="path"/></way>
+          <way id="5"><nd ref="1"/><nd ref="2"/></way>
+          <node id="1" lat="39.9" lon="116.4"/>
+          <node id="2" lat="39.901" lon="116.401"/>
+          <node id="3" lat="39.902" lon="116.4"/>
+        </osm>"#;
+        let parsed = super::parse_osm(xml).unwrap();
+        assert_eq!(parsed.stats.parsed_nodes, 3);
+        assert_eq!(parsed.stats.ways, 5);
+        assert_eq!(parsed.stats.highway_ways, 4);
+        assert_eq!(parsed.stats.retained_road_ways, 1);
+        assert_eq!(parsed.stats.unresolved_road_node_refs, 0);
+        let graph = super::load_osm(xml).unwrap();
+        assert_eq!(graph.graph.node_count(), 2);
+        assert_eq!(graph.graph.edge_count(), 2);
+        assert_eq!(graph.buildings.len(), 1);
+    }
 }

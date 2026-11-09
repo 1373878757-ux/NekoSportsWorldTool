@@ -9,8 +9,28 @@ pub fn explain(error: &str) -> String {
             "已取消",
             "可在当前操作结束后重试；已发出的网络请求不能立刻撤回",
         )
+    } else if error.contains("[road:http]") && error.contains("HTTP 502") {
+        (
+            "Overpass HTTP 502",
+            "服务端或中间网关未能处理请求；稍后再试，已有缓存和平台打卡点仍可查看",
+        )
     } else if error.contains("timeout") || error.contains("timed out") || error.contains("超时") {
         ("网络超时", "检查网络后重试，或从缓存离线预览")
+    } else if error.contains("[road:parse]") {
+        (
+            "OSM 响应解析失败",
+            "检查响应是否完整；该错误不能用于判断学校道路是否为空",
+        )
+    } else if error.contains("[road:graph]") {
+        (
+            "OSM 构图无可用道路",
+            "核对下载范围、highway 筛选和缺失节点计数",
+        )
+    } else if error.contains("[road:clip]") {
+        (
+            "围栏裁剪后无道路",
+            "核对 OSM 覆盖、校区边界与 BD-09 坐标对齐；不能仅据此认定学校没有道路",
+        )
     } else if error.contains("没有可用") || error.contains("没有可跑") || error.contains("空路网")
     {
         (
@@ -54,6 +74,11 @@ mod tests {
             ("没有有效围栏", "围栏或校区问题"),
             ("点位不可达", "点位不可达"),
             ("目标距离不足", "目标距离不足"),
+            ("[road:http] HTTP 502", "Overpass HTTP 502"),
+            ("[road:http] HTTP 502 响应摘要=timeout", "Overpass HTTP 502"),
+            ("[road:parse] XML 错误", "OSM 响应解析失败"),
+            ("[road:graph] 没有可用道路", "OSM 构图无可用道路"),
+            ("[road:clip] 学校围栏内没有可用道路", "围栏裁剪后无道路"),
         ] {
             assert!(super::explain(e).starts_with(&format!("[{label}]")));
         }

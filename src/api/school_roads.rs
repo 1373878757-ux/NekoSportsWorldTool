@@ -1,11 +1,17 @@
 //! School-scoped public OSM download. No account credentials are sent to Overpass.
 use route_planner::RoadGraph;
 use sha2::{Digest, Sha256};
-use std::{io::Read, path::Path, time::Duration};
+use std::{
+    io::Read,
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
+};
 
 const MAX_BYTES: u64 = 24 * 1024 * 1024;
 const TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const ENDPOINT: &str = "https://overpass-api.de/api/interpreter";
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(test)]
 thread_local! {
@@ -84,25 +90,55 @@ fn query_coordinates(points: &[(f64, f64)], margin: f64) -> Result<String, Strin
 }
 
 fn parse(bytes: &[u8]) -> Result<RoadGraph, String> {
+    parse_with_log(bytes, &mut |_| {})
+}
+
+fn parse_with_log(bytes: &[u8], log: &mut dyn FnMut(&str)) -> Result<RoadGraph, String> {
     if bytes.len() as u64 > MAX_BYTES {
-        return Err("学校路网响应超过 24 MiB".into());
+        return Err("[road:parse] 学校路网响应超过 24 MiB".into());
     }
-    let xml = std::str::from_utf8(bytes).map_err(|_| "学校路网不是有效 XML")?;
+    let xml = std::str::from_utf8(bytes).map_err(|_| "[road:parse] 学校路网不是有效 UTF-8 XML")?;
     if !xml.contains("<osm") || !xml.contains("</osm>") || xml.contains("<remark") {
-        return Err("路网服务返回错误或不完整数据，请稍后重试".into());
+        return Err("[road:parse] 路网服务返回错误或不完整 OSM XML，请检查响应内容".into());
     }
-    let net = route_planner::load_osm(bytes)?;
-    if net.graph.edge_count() == 0
-        || net.graph.node_weights().any(|n| {
-            !n.coord.lon.is_finite()
-                || !n.coord.lat.is_finite()
-                || n.coord.lon.abs() > 180.0
-                || n.coord.lat.abs() > 90.0
-        })
-    {
-        return Err("当前学校没有可用的 OSM 道路数据，可手动导入完整路网".into());
+    let parsed = route_planner::parse_osm(bytes).map_err(|e| format!("[road:parse] {e}"))?;
+    let stats = parsed.stats;
+    log(&format!(
+        "[road:parse] bytes={} nodes={} ways={} highway_ways={} retained_road_ways={} unresolved_road_node_refs={}",
+        bytes.len(), stats.parsed_nodes, stats.ways, stats.highway_ways,
+        stats.retained_road_ways, stats.unresolved_road_node_refs
+    ));
+    if parsed.roads.is_empty() {
+        return Err(format!(
+            "[road:graph] OSM 中未找到可用的 highway 道路（highway_ways={}，筛选后道路=0）；请核对查询范围和道路标签",
+            stats.highway_ways
+        ));
+    }
+    let net = route_planner::load::build_graph(&parsed);
+    log_graph("graph", "WGS84", &net, log);
+    if net.graph.node_weights().any(|n| {
+        !n.coord.lon.is_finite()
+            || !n.coord.lat.is_finite()
+            || n.coord.lon.abs() > 180.0
+            || n.coord.lat.abs() > 90.0
+    }) {
+        return Err("[road:graph] OSM 道路节点包含无效经纬度".into());
+    }
+    if net.graph.edge_count() == 0 {
+        return Err(format!(
+            "[road:graph] OSM 构图后没有可用道路边（筛选后道路={}，缺失节点引用={}）",
+            stats.retained_road_ways, stats.unresolved_road_node_refs
+        ));
     }
     Ok(net)
+}
+
+fn log_graph(stage: &str, crs: &str, net: &RoadGraph, log: &mut dyn FnMut(&str)) {
+    log(&format!(
+        "[road:{stage}] crs={crs} nodes={} edges={}",
+        net.graph.node_count(),
+        net.graph.edge_count()
+    ));
 }
 
 fn network_error(action: &str, error: &(dyn std::error::Error + 'static)) -> String {
@@ -121,7 +157,18 @@ fn network_error(action: &str, error: &(dyn std::error::Error + 'static)) -> Str
     format!("{action}失败：{error}")
 }
 
-fn download(query: &str) -> Result<Vec<u8>, String> {
+fn response_summary(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(240)
+        .collect()
+}
+
+fn download(query: &str, log: &mut dyn FnMut(&str)) -> Result<Vec<u8>, String> {
     crate::runtime::ensure_network_allowed()?;
     #[cfg(test)]
     let fixture = TEST_OVERPASS.with(|value| value.borrow().clone());
@@ -135,18 +182,62 @@ fn download(query: &str) -> Result<Vec<u8>, String> {
         .unwrap_or((ENDPOINT, Duration::from_secs(45)));
     #[cfg(not(test))]
     let (endpoint, timeout) = (ENDPOINT, Duration::from_secs(45));
+    let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+    let started = Instant::now();
+    log(&format!(
+        "[road:http] request={request_id} 开始请求 Overpass timeout_ms={}",
+        timeout.as_millis()
+    ));
     let agent = ureq::AgentBuilder::new().timeout(timeout).build();
-    let response = agent
+    let response = match agent
         .post(endpoint)
         .set("User-Agent", "NekoSportsWorldTool/0.3.0 (school-road-map)")
         .send_form(&[("data", query)])
-        .map_err(|e| network_error("自动获取学校路网", &e))?;
+    {
+        Ok(response) => response,
+        Err(ureq::Error::Status(status, response)) => {
+            let mut body = Vec::new();
+            let read = response.into_reader().take(1024).read_to_end(&mut body);
+            let summary = response_summary(&body);
+            let error = format!(
+                "[road:http] request={request_id} 自动获取学校路网失败：HTTP {status} elapsed_ms={} 响应摘要={}{}",
+                started.elapsed().as_millis(),
+                if summary.is_empty() { "（空）" } else { &summary },
+                read.err().map(|e| format!("；错误响应读取失败：{e}")).unwrap_or_default()
+            );
+            log(&error);
+            return Err(error);
+        }
+        Err(error) => {
+            let error = format!(
+                "[road:http] request={request_id} {} elapsed_ms={}",
+                network_error("自动获取学校路网", &error),
+                started.elapsed().as_millis()
+            );
+            log(&error);
+            return Err(error);
+        }
+    };
+    let status = response.status();
     let mut bytes = Vec::new();
     response
         .into_reader()
         .take(MAX_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| network_error("读取学校路网", &e))?;
+        .map_err(|e| {
+            let error = format!(
+                "[road:http] request={request_id} HTTP {status} {} elapsed_ms={}",
+                network_error("读取学校路网", &e),
+                started.elapsed().as_millis()
+            );
+            log(&error);
+            error
+        })?;
+    log(&format!(
+        "[road:http] request={request_id} HTTP {status} bytes={} elapsed_ms={}",
+        bytes.len(),
+        started.elapsed().as_millis()
+    ));
     Ok(bytes)
 }
 
@@ -171,7 +262,7 @@ fn cached_network(
     fences: &[Vec<(f64, f64)>],
     refresh: bool,
     now: i64,
-    fetch: impl FnOnce(&str) -> Result<Vec<u8>, String>,
+    fetch: impl FnOnce(&str, &mut dyn FnMut(&str)) -> Result<Vec<u8>, String>,
     log: &mut dyn FnMut(&str),
 ) -> Result<RoadGraph, String> {
     cached_route_network(dir, school, fences, &[], refresh, now, fetch, log)
@@ -184,7 +275,7 @@ fn cached_route_network(
     points: &[(f64, f64)],
     refresh: bool,
     now: i64,
-    fetch: impl FnOnce(&str) -> Result<Vec<u8>, String>,
+    fetch: impl FnOnce(&str, &mut dyn FnMut(&str)) -> Result<Vec<u8>, String>,
     log: &mut dyn FnMut(&str),
 ) -> Result<RoadGraph, String> {
     if school.trim().is_empty() {
@@ -205,26 +296,35 @@ fn cached_route_network(
         if let Ok(text) = std::fs::read_to_string(&file) {
             if let Ok(cache) = serde_json::from_str::<Cache>(&text) {
                 if cache.key == key && (0..TTL_MS).contains(&(now - cache.loaded_ms)) {
-                    if let Ok(net) = parse(cache.xml.as_bytes()) {
-                        log("[road] 使用当前学校及下载范围对应的路网缓存");
-                        return Ok(net);
+                    match parse_with_log(cache.xml.as_bytes(), log) {
+                        Ok(net) => {
+                            log("[road:cache] 使用当前学校及下载范围对应的有效路网缓存；不发送 HTTP 请求");
+                            return Ok(net);
+                        }
+                        Err(error) => log(&format!("[road:cache] 缓存不可用：{error}")),
                     }
                 }
             }
         }
     }
     log("[road] 正在下载当前学校区域的 OpenStreetMap 路网…");
-    let bytes = fetch(&q)?;
-    let net = parse(&bytes)?;
+    let bytes = fetch(&q, log)?;
+    let net = parse_with_log(&bytes, log)?;
     // Reject empty in-school coverage before accepting a download into the cache.
     let mut aligned = net.clone();
     crate::track::generate_road::align_network(&mut aligned);
-    if crate::track::generate_road::apply_fences(&aligned, fences)
-        .graph
-        .edge_count()
-        == 0
-    {
-        return Err("下载的路网在学校围栏内没有可用道路，不能向校外补足距离".into());
+    log_graph("align", "BD-09", &aligned, log);
+    let clipped = crate::track::generate_road::apply_fences(&aligned, fences);
+    log(&format!(
+        "[road:clip] fence_rings={}（0 表示未施加校园边界）",
+        fences.len()
+    ));
+    log_graph("clip", "BD-09", &clipped, log);
+    if clipped.graph.edge_count() == 0 {
+        return Err(format!(
+            "[road:clip] 下载的路网在学校围栏内没有可用道路（裁剪前 nodes={} edges={}，裁剪后 nodes={} edges=0）；请核对 OSM 覆盖、边界和坐标对齐，不能向校外补足距离",
+            aligned.graph.node_count(), aligned.graph.edge_count(), clipped.graph.node_count()
+        ));
     }
     let cache = Cache {
         key,
@@ -390,9 +490,9 @@ pub fn load_for_school_cancellable(
         fences,
         refresh,
         crate::crypto::envelope::now_ms(),
-        |q| {
+        |q, log| {
             control.check()?;
-            let bytes = download(q)?;
+            let bytes = download(q, log)?;
             control.check()?;
             Ok(bytes)
         },
@@ -423,9 +523,9 @@ pub fn load_for_route_cancellable(
         points,
         refresh,
         crate::crypto::envelope::now_ms(),
-        |q| {
+        |q, log| {
             control.check()?;
-            let bytes = download(q)?;
+            let bytes = download(q, log)?;
             control.check()?;
             Ok(bytes)
         },
@@ -529,8 +629,12 @@ mod tests {
         let (endpoint, server) =
             loopback_response("502 Bad Gateway", b"fixture gateway error", Duration::ZERO);
         let _guard = LoopbackOverride::new(endpoint, Duration::from_secs(2));
-        let error = download("[out:xml];out;").unwrap_err();
+        let mut logs = Vec::new();
+        let error = download("[out:xml];out;", &mut |s| logs.push(s.to_owned())).unwrap_err();
         assert!(error.contains("502"), "{error}");
+        assert!(error.starts_with("[road:http]"), "{error}");
+        assert!(error.contains("fixture gateway error"), "{error}");
+        assert!(logs.iter().any(|s| s.contains("elapsed_ms=")));
         assert_eq!(server.join().unwrap(), 1);
     }
 
@@ -540,7 +644,7 @@ mod tests {
             loopback_response("200 OK", b"<osm></osm>", Duration::from_millis(250));
         let _guard = LoopbackOverride::new(endpoint, Duration::from_millis(50));
         let started = std::time::Instant::now();
-        let error = download("[out:xml];out;").unwrap_err();
+        let error = download("[out:xml];out;", &mut |_| {}).unwrap_err();
         assert!(error.contains("自动获取学校路网超时"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(2));
         assert_eq!(server.join().unwrap(), 1);
@@ -604,12 +708,108 @@ mod tests {
             &fences,
             false,
             1001,
-            |_| panic!("a fresh road cache must not send another request"),
+            |_, _| panic!("a fresh road cache must not send another request"),
             &mut |_| {},
         )
         .unwrap();
         assert_eq!(first.graph.edge_count(), second.graph.edge_count());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn parsing_errors_empty_highways_and_missing_nodes_have_separate_diagnostics() {
+        for xml in [b"not XML".as_slice(), b"<osm><way></osm>"] {
+            assert!(parse(xml).err().unwrap().starts_with("[road:parse]"));
+        }
+        let mut logs = Vec::new();
+        let error = parse_with_log(b"<osm></osm>", &mut |s| logs.push(s.to_owned()))
+            .err()
+            .unwrap();
+        assert!(error.starts_with("[road:graph]"));
+        assert!(logs.iter().any(|s| s.contains("highway_ways=0")));
+
+        let missing = br#"<osm><node id="1" lat="39.9" lon="116.4"/>
+          <way id="1"><nd ref="1"/><nd ref="99"/><tag k="highway" v="footway"/></way></osm>"#;
+        let error = parse(missing).err().unwrap();
+        assert!(error.starts_with("[road:graph]"), "{error}");
+        assert!(error.contains("缺失节点引用=1"), "{error}");
+
+        let filtered = br#"<osm><node id="1" lat="39.9" lon="116.4"/>
+          <node id="2" lat="39.901" lon="116.401"/>
+          <way id="1"><nd ref="1"/><nd ref="2"/><tag k="highway" v="motorway"/></way></osm>"#;
+        assert!(parse(filtered).err().unwrap().contains("highway_ways=1"));
+    }
+
+    #[test]
+    fn loaded_graph_and_empty_boundary_clip_are_logged_without_changing_coordinates() {
+        let dir = std::env::temp_dir().join(format!("road-stage-{}", uuid::Uuid::new_v4()));
+        let (fences, xml) = fixture();
+        let mut logs = Vec::new();
+        let net = cached_network(
+            &dir,
+            "diagnostic-school",
+            &fences,
+            false,
+            1000,
+            |_, _| Ok(xml.clone()),
+            &mut |s| logs.push(s.to_owned()),
+        )
+        .unwrap();
+        for expected in [
+            "highway_ways=1 retained_road_ways=1",
+            "[road:graph] crs=WGS84 nodes=2 edges=2",
+            "[road:align] crs=BD-09 nodes=2 edges=2",
+            "[road:clip] crs=BD-09 nodes=2 edges=2",
+        ] {
+            assert!(logs.iter().any(|s| s.contains(expected)), "{logs:?}");
+        }
+        assert_eq!(net.graph.node_weights().next().unwrap().coord.lat, 39.9);
+        let outside = vec![vec![
+            (39.91, 116.41),
+            (39.91, 116.414),
+            (39.914, 116.414),
+            (39.914, 116.41),
+        ]
+        .into_iter()
+        .map(|(lat, lon)| crate::track::geom::wgs84_to_bd09(lat, lon))
+        .collect()];
+        let key = route_scope_key("diagnostic-school", &outside, &[]);
+        logs.clear();
+        let error = cached_network(
+            &dir,
+            "diagnostic-school",
+            &outside,
+            false,
+            1001,
+            |_, _| Ok(xml),
+            &mut |s| logs.push(s.to_owned()),
+        )
+        .err()
+        .unwrap();
+        assert!(error.starts_with("[road:clip]"), "{error}");
+        assert!(error.contains("裁剪前 nodes=2 edges=2"), "{error}");
+        assert!(error.contains("裁剪后 nodes=0 edges=0"), "{error}");
+        assert!(!dir.join(format!("{key}.json")).exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn diagnostic_response_summary_is_bounded_and_has_no_control_characters() {
+        let body = format!("\n\r\t服务容量已满 {}\u{1b}[0m", "测试".repeat(500));
+        let summary = response_summary(body.as_bytes());
+        assert!(summary.starts_with("服务容量已满 "));
+        assert_eq!(summary.chars().count(), 240);
+        assert!(!summary.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn offline_diagnostic_download_stops_before_transport_and_request_log() {
+        let previous = crate::runtime::TEST_OFFLINE.with(|value| value.replace(Some(true)));
+        let mut logs = Vec::new();
+        let result = download("unused", &mut |s| logs.push(s.to_owned()));
+        crate::runtime::TEST_OFFLINE.with(|value| value.set(previous));
+        assert_eq!(result.unwrap_err(), crate::runtime::OFFLINE_MESSAGE);
+        assert!(logs.is_empty());
     }
     #[test]
     fn coordinate_round_trip_and_query_scope() {
@@ -635,7 +835,7 @@ mod tests {
                     fences,
                     refresh,
                     now,
-                    |_| bytes.ok_or("offline".into()),
+                    |_, _| bytes.ok_or("offline".into()),
                     &mut |_| {},
                 )
             };
@@ -668,7 +868,7 @@ mod tests {
             &points,
             false,
             1000,
-            |q| {
+            |q, _| {
                 assert!(q.contains("39.8980000,116.3980000,39.9030000,116.4030000"));
                 Ok(xml)
             },
@@ -691,7 +891,7 @@ mod tests {
                 pts,
                 false,
                 now,
-                |_| Err("offline".into()),
+                |_, _| Err("offline".into()),
                 &mut |_| {},
             )
         };
@@ -735,7 +935,7 @@ mod tests {
             &fences,
             false,
             1000,
-            |_| Ok(xml),
+            |_, _| Ok(xml),
             &mut |_| {},
         )
         .unwrap();

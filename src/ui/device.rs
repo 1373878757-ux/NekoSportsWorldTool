@@ -150,24 +150,33 @@ impl App {
             theme::text_dim(),
             "修改城市或定位锚点后，请点击“保存”；跑步流程只使用已保存的身份信息。",
         );
-        if location_fields_changed(&self.identity, &self.device_buf) {
-            ui.colored_label(
-                theme::warn(),
-                "检测到城市或定位锚点有未保存修改，当前跑步仍会使用上次保存的值。",
-            );
+        let location_changed = location_fields_changed(&self.identity, &self.device_buf);
+        if location_changed {
+            if let Some(issue) = self.device_buf.location_configuration_issue() {
+                ui.colored_label(theme::warn(), format!("待保存的定位配置无效：{issue}"));
+            } else {
+                ui.colored_label(
+                    theme::warn(),
+                    "检测到城市或定位锚点有未保存修改，当前跑步仍会使用上次保存的值。",
+                );
+            }
         }
 
         ui.add_space(8.0);
         mobile::row(ui, |ui| {
             if ui.add(theme::primary_btn("保存")).clicked() {
-                match crate::api::model::save_identity(&self.device_buf) {
-                    Ok(()) => {
-                        self.identity = self.device_buf.clone();
-                        self.status = "√ 设备身份已保存并生效".into();
-                        self.log.push("√  已更新（新设备 ID 从下个请求开始生效）");
-                        page.saved_flash = 2.0;
+                if let Err(issue) = validate_location_edit(&self.identity, &self.device_buf) {
+                    self.status = format!("× 定位配置未保存：{issue}");
+                } else {
+                    match crate::api::model::save_identity(&self.device_buf) {
+                        Ok(()) => {
+                            self.identity = self.device_buf.clone();
+                            self.status = "√ 设备身份已保存并生效".into();
+                            self.log.push("√  已更新（新设备 ID 从下个请求开始生效）");
+                            page.saved_flash = 2.0;
+                        }
+                        Err(e) => self.status = format!("× 保存失败：{e}"),
                     }
-                    Err(e) => self.status = format!("× 保存失败：{e}"),
                 }
             }
             if ui.button("撤销修改").clicked() {
@@ -198,10 +207,12 @@ impl App {
             self.identity.anchor_lat,
             self.identity.anchor_lon,
         ));
-        if self.identity.has_unconfigured_default_location() {
+        if let Some(issue) = self.identity.location_configuration_issue() {
+            ui.colored_label(theme::warn(), format!("当前保存的定位配置未就绪：{issue}"));
+        } else {
             ui.colored_label(
-                theme::warn(),
-                "运行前请填写实际城市和定位锚点；默认大连配置不会用于提交",
+                theme::ok(),
+                "当前保存的定位配置通过本地格式校验；请自行核对实际所在地",
             );
         }
         if page.saved_flash > 0.0 {
@@ -215,8 +226,25 @@ impl App {
 
 fn location_fields_changed(saved: &HeaderIdentity, pending: &HeaderIdentity) -> bool {
     saved.city.trim() != pending.city.trim()
+        || !pending.anchor_lat.is_finite()
+        || !pending.anchor_lon.is_finite()
         || (saved.anchor_lat - pending.anchor_lat).abs() > 1e-9
         || (saved.anchor_lon - pending.anchor_lon).abs() > 1e-9
+}
+
+fn validate_location_edit(saved: &HeaderIdentity, pending: &HeaderIdentity) -> Result<(), String> {
+    // An unchanged legacy default may still be saved with unrelated device edits.
+    // The existing run guard continues to reject it until location is configured.
+    if pending.city.trim().is_empty() {
+        return Err("城市不能为空".into());
+    }
+    pending.anchor_coordinate()?;
+    if location_fields_changed(saved, pending) {
+        if let Some(issue) = pending.location_configuration_issue() {
+            return Err(issue);
+        }
+    }
+    Ok(())
 }
 
 /// 整套随机：uuid v4 设备 ID（大写）；机型/系统按平台池抽取。
@@ -258,6 +286,32 @@ mod tests {
         pending = saved.clone();
         pending.anchor_lat += 0.000001;
         assert!(location_fields_changed(&saved, &pending));
+    }
+
+    #[test]
+    fn location_edit_validation_preserves_unrelated_device_edits_and_rejects_mismatch() {
+        let saved = HeaderIdentity::default();
+        let mut pending = saved.clone();
+        pending.device_name = "Manual device name".into();
+        assert!(validate_location_edit(&saved, &pending).is_ok());
+        assert!(pending.has_unconfigured_default_location());
+
+        pending.city = "哈尔滨市".into();
+        assert!(validate_location_edit(&saved, &pending)
+            .unwrap_err()
+            .contains("锚点仍是内置大连默认坐标"));
+        assert_eq!(saved.city, "大连市");
+        pending.anchor_lat = 45.75;
+        pending.anchor_lon = 126.63;
+        assert!(validate_location_edit(&saved, &pending).is_ok());
+        pending.city = "  ".into();
+        assert!(validate_location_edit(&saved, &pending).is_err());
+        pending.city = "哈尔滨市".into();
+        pending.anchor_lat = f64::NAN;
+        assert!(validate_location_edit(&saved, &pending).is_err());
+        pending.anchor_lat = 126.63;
+        pending.anchor_lon = 45.75;
+        assert!(validate_location_edit(&saved, &pending).is_err());
     }
 
     #[test]

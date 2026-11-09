@@ -67,11 +67,40 @@ impl HeaderIdentity {
         crate::location::Coordinate::new(self.anchor_lat, self.anchor_lon, 0.0)
     }
 
-    /// 旧版本首次启动会写入大连默认值。未明确配置前禁止将它作为异地跑步位置使用。
+    /// 返回可直接展示给用户的定位配置问题。
+    pub fn location_configuration_issue(&self) -> Option<String> {
+        let city = self.city.trim();
+        if city.is_empty() {
+            return Some("城市不能为空，请填写本次跑步所在城市。".into());
+        }
+        let anchor = match self.anchor_coordinate() {
+            Ok(anchor) => anchor,
+            Err(error) => return Some(format!("定位锚点无效：{error}。请检查纬度和经度。")),
+        };
+        if anchor.is_default_dalian() {
+            return Some(if city == crate::location::default_city() {
+                format!(
+                    "城市和定位锚点仍是内置大连默认配置（{:.6}, {:.6}）；请填写当前所在地的真实锚点。",
+                    anchor.latitude, anchor.longitude
+                )
+            } else {
+                format!(
+                    "城市已设为“{city}”，但定位锚点仍是内置大连默认坐标（{:.6}, {:.6}）；请核对纬度/经度顺序并填写当前所在地坐标。",
+                    anchor.latitude, anchor.longitude
+                )
+            });
+        }
+        if city == crate::location::default_city() {
+            return Some(
+                "城市仍是内置默认值“大连市”；请在设备信息页核对当前城市和定位锚点。".into(),
+            );
+        }
+        None
+    }
+
+    /// 旧版本首次启动会写入大连默认值。未明确配置前禁止将它作为跑步位置使用。
     pub fn has_unconfigured_default_location(&self) -> bool {
-        self.city.trim().is_empty()
-            || self.city.trim() == crate::location::default_city()
-            || self.anchor_coordinate().map(|c| c.is_default_dalian()).unwrap_or(true)
+        self.location_configuration_issue().is_some()
     }
 
     /// 安装时间：持久值优先；缺失时按平台惯例回退（iOS 3 天 / Android 90 天前）。
@@ -336,6 +365,14 @@ mod tests {
     #[test]
     fn legacy_dalian_defaults_are_not_accepted_for_a_run() {
         assert!(HeaderIdentity::default().has_unconfigured_default_location());
+        let mismatched_city = HeaderIdentity {
+            city: "哈尔滨市".into(),
+            ..Default::default()
+        };
+        assert!(mismatched_city
+            .location_configuration_issue()
+            .unwrap()
+            .contains("城市已设为“哈尔滨市”"));
         let configured = HeaderIdentity {
             city: "石家庄市".into(),
             anchor_lat: 38.0428,
@@ -343,5 +380,31 @@ mod tests {
             ..Default::default()
         };
         assert!(!configured.has_unconfigured_default_location());
+        let configured_dalian = HeaderIdentity {
+            anchor_lat: 38.914,
+            anchor_lon: 121.614,
+            ..Default::default()
+        };
+        assert!(configured_dalian.has_unconfigured_default_location());
+    }
+
+    #[test]
+    fn location_configuration_reports_empty_city_and_invalid_coordinates() {
+        let mut identity = HeaderIdentity {
+            city: "  ".into(),
+            anchor_lat: 39.9,
+            anchor_lon: 116.4,
+            ..Default::default()
+        };
+        assert!(identity
+            .location_configuration_issue()
+            .unwrap()
+            .contains("城市不能为空"));
+        identity.city = "北京市".into();
+        identity.anchor_lat = f64::NAN;
+        assert!(identity
+            .location_configuration_issue()
+            .unwrap()
+            .contains("定位锚点无效"));
     }
 }
