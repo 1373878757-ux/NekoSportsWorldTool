@@ -7,6 +7,8 @@
 分支：`feature/j-claude-cross-platform`
 基线 Commit：`3368325408f8f4f86c82810798752a81cfb94f75`
 
+最终代码 Commit：`3d12bf3cfc355f6779c46b9476b73836618e74d9`
+
 ## 结论
 
 本次将平台打卡点只读展示从路网规划结果中分离。无 OSM、HTTP 502、超时、空 OSM、缺少围栏，以及策略接口失败时，已存在且作用域匹配的合法缓存仍可在地图独立绘制。真实 Overpass 失败由 loopback HTTP 测试覆盖；未用账户凭据访问平台。
@@ -19,8 +21,8 @@
 | 无围栏 / 无道路 / 无路线预览 | 通过；地图数据层照常绘制打卡点。 |
 | 接口数量、解析、有效坐标和地图层计数 | 离线混合数据测试验证 2 条原始行、1 个有效坐标、1 个无效坐标；有效数据显示计数与坐标列表一致。GUI 合成样本为 4/4，有 1 对坐标重合实体，仍保留 4 个实体。 |
 | BD-09 与 WGS84 | 转换边界测试通过；详情同时显示原始 BD-09 与地图 WGS84 坐标。没有自动交换经纬度。 |
-| Mac 离线 GUI | 通过；独立 `.app` 与 `NSWT_OFFLINE=1`、隔离 `NSWT_DATA_DIR` 启动。实际窗口显示 4 个合成缓存点、中文详情、无道路和围栏状态；重启后重新读取 4 点。未登录、未发送运动写入。 |
-| Windows 构建 | 尚未触发；需提交并推送后由既有 Actions 生成。 |
+| Mac 离线 GUI | 通过；最终 release GUI 以 `NSWT_OFFLINE=1` 和独立 `NSWT_DATA_DIR=/Users/mac/Library/Caches/NekoSportsWorldTool-phase1-20261109-final` 启动。实际窗口显示 4 个合成缓存点、4 个视口内点位、3 个标记位置（含重合实体）、中文详情及独立道路/围栏/路线状态。重启后重新读取 4 点；未登录、未发送运动写入。 |
+| Windows 构建 | 通过；GitHub Actions Run `42612266893`，提交 `3d12bf3cfc355f6779c46b9476b73836618e74d9`，Artifact `NekoSportsWorldTool-J-claude-Windows-x64`。Runner smoke 已完成 EXE 元数据、包内容、CLI 和校验检查；其 GUI smoke 因 runner 缺少 OpenGL 2 context 不可用，Windows 实机 GUI 验收仍待完成。 |
 | 业务隔离 | 新增代码没有调用运动记录提交接口。未登录 GUI 的“开始跑步”控件不可用。没有真实账户提交或线上写入。 |
 
 ## 原有依赖与改造
@@ -55,7 +57,7 @@ HTTP 502、传输超时、空 OSM 分别由本机 loopback HTTP server 返回真
 ## 修改文件
 
 - 新增：`src/checkpoint.rs`、`src/ui/checkpoint_jobs.rs`、`src/ui/checkpoints.rs`、`src/ui/checkpoint_integration_tests.rs`。
-- 修改：`src/api/model.rs`、`src/api/points.rs`、`src/api/school_roads.rs`、`src/lib.rs`、`src/startup_data.rs`、`src/ui/jobs.rs`、`src/ui/layout_tests.rs`、`src/ui/map.rs`、`src/ui/mod.rs`、`src/ui/msgs.rs`、`src/ui/osm.rs`、`src/ui/route_refresh_tests.rs`、`src/ui/run.rs`。
+- 修改：`src/api/client.rs`（Windows loopback 测试 socket 设回阻塞模式）、`src/api/model.rs`、`src/api/points.rs`、`src/api/school_roads.rs`、`src/lib.rs`、`src/startup_data.rs`、`src/ui/jobs.rs`、`src/ui/layout_tests.rs`、`src/ui/map.rs`、`src/ui/mod.rs`、`src/ui/msgs.rs`、`src/ui/osm.rs`、`src/ui/route_refresh_tests.rs`、`src/ui/run.rs`。
 - `.gitignore` 与三份现有调查文档为任务开始前已存在的用户修改，不属于本次提交。
 
 ## 验证记录
@@ -63,18 +65,19 @@ HTTP 502、传输超时、空 OSM 分别由本机 loopback HTTP server 返回真
 环境：macOS 27.2 build 26B123、Apple Silicon、Rust 1.96.1、Cargo 1.96.1。构建和测试使用 `CARGO_NET_OFFLINE=true`，没有 Cargo 外部依赖下载。
 
 - 基线：GUI/CLI `cargo check`、`cargo test` 和 Clippy 成功；全仓 `cargo fmt --all -- --check` 已在无本次变更的 Android/route-planner 文件失败。
-- 最终 GUI 默认 feature：`cargo check --locked` 通过；`cargo test --locked` 通过，241 passed，0 failed。
-- CLI-only：`cargo check --locked --no-default-features` 通过；对应测试 152 passed，0 failed。现有 dead-code 警告保留。
+- 最终 GUI 默认 feature：`cargo check --locked` 通过；`cargo test --workspace --locked` 通过，根 crate 242、route-planner 单元 8、集成 7 项通过。
+- CLI-only：`cargo check --locked --no-default-features` 通过；`cargo test --workspace --locked --no-default-features` 通过，根 crate 153、route-planner 单元 8、集成 7 项通过。现有 dead-code 警告保留。
 - `cargo clippy --all-targets --locked` 通过。仓库存在既有 warning；本次新增的缓存辅助代码 Clippy 警告已修正。
 - 全仓格式检查仍报告已存在格式差异，例如 `crates/route-planner/tests/basic.rs` 和 `src/android.rs`。对本次 Rust 文件单独运行 `rustfmt --edition 2021 --config skip_children=true`；`git diff --check` 通过。没有递归格式化无关 GUI 子模块。
-- 本地 release GUI 构建通过。Mac GUI 通过 CUA 实际启动专用验证 bundle，检查离线状态、4 个合成点、中文元数据和坐标、缓存过期标识；重启后 4 个点重新加载。点选详情和“显示全部点位”实际操作通过。CUA 窗口截图用于即时视觉核验；验收目录保存了合成夹具和启动日志，没有单独导出截图文件。
+- 本地 release GUI 构建通过。Mac GUI 通过 CUA 实际启动专用验证 bundle，检查离线状态、4 个合成点、中文元数据和坐标、缓存过期标识、道路/围栏/路线独立状态；重启后 4 个点重新加载。点选详情和“显示全部点位”实际操作通过，CUA 对最终窗口做了即时截图核验；目录内另留有此前导出的详情截图 `mac-checkpoints-details.png`（其实际编码为 JPEG）及最终日志。首次验证 bundle 启动出现初始化超时；改用新的独立用户缓存目录和验证 bundle 后，最终 GUI 初始化及验收成功。没有将失败启动记为通过。
+- Windows Actions 首次运行 `42611705497` 暴露既有 loopback 认证测试在 Windows 接受 socket 上读到 `WouldBlock`；测试夹具显式把 accepted socket 设为阻塞并设置读写超时后，本地目标测试通过，完整 Actions Run `42612266893` 通过。
 - 全部原始基线和终测日志位于 `/Users/mac/Desktop/run fasting/verification/checkpoint-map-phase1-20261109/`。
 
 ## Windows 与交付状态
 
-仓库已有 `.github/workflows/windows-build.yml`，目标 `x86_64-pc-windows-msvc`，包含 GUI/CLI 检查测试、Clippy、发布构建、现有 ZIP 打包、SHA-256 和 Windows GUI smoke。工作流在提交到开发分支后运行。Actions 构建成功将证明 Windows 编译和打包，不等价于 Windows 实机 GUI 验收；Runner 缺少 OpenGL 2 context 时仍需 Windows 实机补测。本报告将在 Actions 完成并下载 ZIP 后补入提交号、Run ID、artifact SHA-256 和真实 smoke 结果。
+仓库已有 `.github/workflows/windows-build.yml`，目标 `x86_64-pc-windows-msvc`。Run `42612266893` 已对最终代码完成 GUI/CLI 检查与测试、Clippy、release 构建、ZIP 打包和 CLI/包 smoke。提交：`3d12bf3cfc355f6779c46b9476b73836618e74d9`。Artifact ID：`13670678492`。下载文件：`/Users/mac/Desktop/run fasting/verification/checkpoint-map-phase1-20261109/windows-actions-42612266893/NekoSportsWorldTool-J-claude-Windows-x64.zip`。ZIP SHA-256：`bd55599fe883093809dcfadd37eea633c76ec9a6e38204cc7c8ced44542d2b02`；ZIP 内 `SHA256SUMS.txt` 与独立重算结果一致，包内包含 `NekoSportsWorldTool.exe`、README、LICENSE、THIRD-PARTY-NOTICES 及 539 个文件。Windows Runner 未提供 OpenGL 2 context，故 GUI smoke 明确记为不可用，仍需 Windows 10/11 实机验证显示、缩放、点选与中文字体。
 
-没有创建公开 Release。没有触发运动记录提交、真实账户登录或账户数据写入。
+没有创建公开 Release。没有触发运动记录提交、真实账户登录或账户数据写入。验收目录及完整日志位于 `/Users/mac/Desktop/run fasting/verification/checkpoint-map-phase1-20261109/`。
 
 ## 已知限制与后续
 
