@@ -241,7 +241,7 @@ impl App {
             } else if self.osm_page.status.is_empty() {
                 "未加载".to_string()
             } else {
-                self.osm_page.status.clone()
+                crate::road_status::map_summary(&self.osm_page.status)
             };
             ui.label(format!("道路：{roads}"));
             let boundary = if self.boundary.status.is_empty() {
@@ -549,7 +549,11 @@ mod tests {
             "地图数据层 3 个 · 视口内绘制 3 个 · 屏幕标记位置 2 处 · 视口外 0 个"
         )
         .is_some());
-        assert!(text_position(&output, "道路：HTTP 502").is_some());
+        assert!(text_position(
+            &output,
+            "道路：公共地图服务暂时不可用（HTTP 502）；打卡点仍可查看，可稍后重新加载。"
+        )
+        .is_some());
         let header = text_position(&output, "打卡点列表、详情与完整性统计").unwrap();
         click(&mut app, &context, header);
         click(&mut app, &context, markers[0]);

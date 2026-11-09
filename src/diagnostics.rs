@@ -1,6 +1,11 @@
 //! Diagnostics use a whitelist; raw logs, responses, coordinates and account fields are excluded.
 pub fn category(text: &str) -> &'static str {
     for (needle, label) in [
+        ("HTTP 502", "公共地图服务 HTTP 502"),
+        ("[road:parse]", "地图响应解析失败"),
+        ("[road:graph]", "地图构图无道路"),
+        ("[road:clip]", "校园边界裁剪后无道路"),
+        ("[road:rate-limit]", "公共地图请求间隔不足"),
         ("围栏", "围栏缺失、变化或未确认"),
         ("不连通", "校内道路不连通"),
         ("不可达", "点位不可达"),

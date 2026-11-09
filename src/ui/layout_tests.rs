@@ -2,6 +2,8 @@ use super::*;
 use crate::presentation::STATUS_BAR_CREDIT;
 use egui::{Event, PointerButton, Pos2, Rect, Vec2};
 
+#[path = "map_view_tests.rs"]
+mod map_view_tests;
 #[path = "route_refresh_tests.rs"]
 pub(crate) mod route_refresh_tests;
 #[path = "violation_tests.rs"]
@@ -261,6 +263,8 @@ fn school_download_controls_are_reachable_on_phone_and_desktop() {
         click(&mut app, &ctx, w, h, at);
         assert!(app.osm_page.status.contains("请先登录"));
         assert!(!app.osm_page.busy);
+        let advanced = scroll_to_label(&mut app, &ctx, w, h, "高级：本地地图文件与诊断");
+        click(&mut app, &ctx, w, h, advanced);
         scroll_to_label(&mut app, &ctx, w, h, "重新下载路网");
     }
 }
@@ -439,6 +443,8 @@ fn manual_osm_button_loads_without_login_and_draws_roads_with_visible_status() {
         app.run_page.route_mode = crate::track::generate_road::RouteMode::Road;
         app.tab = 7;
         app.osm_page.path = path.display().to_string();
+        let advanced = scroll_to_label(&mut app, &ctx, w, h, "高级：本地地图文件与诊断");
+        click(&mut app, &ctx, w, h, advanced);
         let at = scroll_to_label(&mut app, &ctx, w, h, "加载路网");
         click(&mut app, &ctx, w, h, at);
         assert!(app.osm_page.status.contains("加载中"));

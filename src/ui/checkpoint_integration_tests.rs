@@ -89,7 +89,7 @@ fn wait(app: &mut App) {
     }
     app.poll_messages();
 }
-fn mock_overpass(
+pub(super) fn mock_overpass(
     status: &'static str,
     body: &'static str,
     delay: Duration,

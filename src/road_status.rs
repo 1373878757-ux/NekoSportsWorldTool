@@ -63,6 +63,29 @@ pub fn explain(error: &str) -> String {
     };
     format!("[{kind}] {error}\n建议：{help}")
 }
+/// Concise map copy; detailed HTTP/parser diagnostics stay in logs/advanced controls.
+pub fn map_summary(status: &str) -> String {
+    if status.contains("HTTP 502") {
+        "公共地图服务暂时不可用（HTTP 502）；打卡点仍可查看，可稍后重新加载。".into()
+    } else if status.contains("[road:rate-limit]") {
+        "公共地图请求间隔不足，请稍后重新加载；已有点位和地图仍可查看。".into()
+    } else if status.contains("超时") || status.contains("timeout") {
+        "地图服务响应超时；已有点位和地图仍可查看，可稍后重新加载。".into()
+    } else if status.contains("[road:clip]") {
+        "下载的道路未落入当前校园边界，请核对校区；打卡点仍可查看。".into()
+    } else if status.contains("[road:parse]") {
+        "地图文件或服务返回的内容无效；请核对来源，详情见高级选项和运行日志。".into()
+    } else if status.contains("[road:graph]") {
+        "地图数据中没有可显示的道路；请核对校区和数据范围，打卡点仍可查看。".into()
+    } else if status.contains("地图来源设置保存失败") {
+        "地图已加载，但来源设置保存失败；重启后可能恢复旧选择，详情见高级选项。".into()
+    } else if status.contains("路网加载成功") {
+        "校园道路已加载；点位、围栏和路线状态分别显示。".into()
+    } else {
+        status.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

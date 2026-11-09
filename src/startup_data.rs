@@ -387,6 +387,32 @@ mod tests {
     }
 
     #[test]
+    fn migration_and_reload_preserve_legacy_city_and_default_anchor_without_silent_correction() {
+        let base = Directory::new();
+        let old = base.0.join("legacy");
+        let new = base.0.join("current");
+        std::fs::create_dir(&old).unwrap();
+        let bytes = br#"{"device_id":"synthetic-device","app_install_time":123,"mac_address":"02:00:00:00:00:01","city":"\u54c8\u5c14\u6ee8\u5e02"}"#;
+        std::fs::write(old.join("identity.json"), bytes).unwrap();
+        let loaded = initialize_at(&new, Some(&old)).unwrap();
+        assert_eq!(loaded.identity.city, "哈尔滨市");
+        assert!(loaded
+            .identity
+            .anchor_coordinate()
+            .unwrap()
+            .is_default_dalian());
+        assert!(loaded
+            .identity
+            .location_configuration_issue()
+            .unwrap()
+            .contains("锚点仍是内置大连默认坐标"));
+        let reloaded = initialize_at(&new, None).unwrap();
+        assert_eq!(reloaded.identity, loaded.identity);
+        assert_eq!(std::fs::read(old.join("identity.json")).unwrap(), bytes);
+        assert_eq!(std::fs::read(new.join("identity.json")).unwrap(), bytes);
+    }
+
+    #[test]
     fn corrupt_migration_never_creates_a_partial_target() {
         let base = Directory::new();
         let old = base.0.join("old");

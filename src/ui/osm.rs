@@ -1,4 +1,4 @@
-//! 「路网」导入页：选择 OSM 文件 → 后台解析 → 画布预览 + 统计。
+//! 校园地图：先显示点位，后台读取道路；文件导入保留为高级选项。
 
 use eframe::egui;
 use std::sync::Arc;
@@ -22,6 +22,12 @@ pub struct NetworkLoad {
 }
 
 pub struct OsmPage {
+    pub(super) display_network: Option<Arc<RoadGraph>>,
+    pub(super) display_scope: Option<super::map_jobs::MapDisplayScope>,
+    pub(super) auto_scope: Option<super::map_jobs::MapDisplayScope>,
+    pub(super) auto_attempted: bool,
+    pub(super) pending_manual_path: Option<String>,
+    pub(super) map_only_request: bool,
     pub campuses: Vec<crate::api::campus::Campus>,
     pub selected_key: String,
     pub offline: bool,
@@ -41,6 +47,12 @@ pub struct OsmPage {
 impl Default for OsmPage {
     fn default() -> Self {
         OsmPage {
+            display_network: None,
+            display_scope: None,
+            auto_scope: None,
+            auto_attempted: false,
+            pending_manual_path: None,
+            map_only_request: false,
             cancel: Arc::new(crate::task_control::Control::default()),
             campuses: Vec::new(),
             selected_key: String::new(),
@@ -64,7 +76,51 @@ fn ring_to_pts(ring: &[Coord]) -> Vec<(f64, f64)> {
 }
 
 impl App {
+    fn draw_local_map_import(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut load = false;
+        egui::CollapsingHeader::new("高级：本地地图文件与诊断")
+            .id_salt("advanced_map_import")
+            .show(ui, |ui| {
+                ui.label("通常无需准备文件。公共地图暂不可用时，可导入已合法获取的校园地图。");
+                ui.label("支持 OpenStreetMap XML（.osm / .xml），原始坐标为 WGS84，最大 24 MiB；不支持直接导入 PBF、JSON 或网页。");
+                ui.label("数据来源：OpenStreetMap 网站的小范围导出，或你有权使用的兼容 XML；请保留来源署名。文件不会上传，也不会变成平台打卡点。");
+                theme::external_link(ui, "OpenStreetMap 小范围地图导出", "https://www.openstreetmap.org/export");
+                ui.label("程序会检查文件大小、文本格式、完整性、道路和坐标。导入失败会保留此前的地图设置。");
+                ui.label("文件只提供道路；学校边界和平台点位仍从各自数据层读取，文件不替代校园边界约束。");
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("本地地图文件：");
+                    ui.add_sized([ui.available_width().clamp(100.0, 340.0), 26.0],
+                        egui::TextEdit::singleline(&mut self.osm_page.path).hint_text("选择文件或拖入 .osm / .xml"));
+                    #[cfg(not(target_os = "android"))]
+                    if ui.button("浏览…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().add_filter("OSM XML", &["osm", "xml"]).pick_file() {
+                            self.osm_page.path = path.display().to_string();
+                        }
+                    }
+                    if ui.add_enabled(!self.osm_page.path.trim().is_empty() && !self.osm_page.busy,
+                        theme::primary_btn("加载路网")).clicked() {
+                        load = true;
+                    }
+                });
+                if ui.add_enabled(!crate::runtime::offline() && !self.osm_page.busy && !self.checkpoints.busy,
+                    egui::Button::new("重新下载路网")).clicked() {
+                    self.use_school_roads(true);
+                }
+                ui.small("重新下载会绕过有效道路缓存；公共服务请求至少间隔 30 秒，不会自动重试。");
+                if let Some(net) = self.displayed_road_network() {
+                    ui.small(format!("地图统计：节点 {} · 有向边 {} · 建筑 {}",
+                        net.graph.node_count(), net.graph.edge_count(), net.buildings.len()));
+                }
+                if !self.osm_page.status.is_empty() {
+                    ui.small(format!("详细状态：{}", self.osm_page.status));
+                }
+                ui.small("逐阶段计数及 HTTP 响应摘要可在运行日志页查看。");
+            });
+        load
+    }
+
     pub fn draw_osm_page(&mut self, ui: &mut egui::Ui) {
+        self.ensure_map_loaded();
         if self.auth_expired {
             ui.colored_label(
                 theme::warn(),
@@ -81,7 +137,10 @@ impl App {
             }
         }
         if !self.osm_page.status.is_empty() {
-            ui.colored_label(theme::plain(), &self.osm_page.status);
+            ui.colored_label(
+                theme::plain(),
+                crate::road_status::map_summary(&self.osm_page.status),
+            );
         }
 
         egui::ScrollArea::vertical()
@@ -91,100 +150,65 @@ impl App {
 
     fn draw_osm_contents(&mut self, ui: &mut egui::Ui) {
         let mut load_now = false;
+        let displayed_network = self.displayed_road_network();
 
         self.draw_checkpoint_controls(ui);
         ui.separator();
 
-        ui.label("按学校围栏或当前点位获取路网；多出的里程沿同一道路闭环重复。");
+        ui.label("打卡点会独立显示；校园道路在后台读取，失败后可主动重新加载。");
         let school = self
             .session
             .as_ref()
             .and_then(|s| s.profile.get("campusName"))
             .and_then(|v| v.as_str())
-            .unwrap_or("请先登录并配置定位锚点");
+            .unwrap_or("请先登录并核对实际位置");
         ui.label(format!("当前学校：{school}"));
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
-                    !crate::runtime::offline() && !self.osm_page.busy,
+                    !crate::runtime::offline() && !self.osm_page.busy && !self.checkpoints.busy,
                     theme::primary_btn("自动获取学校路网"),
                 )
                 .clicked()
             {
                 self.use_school_roads(false);
             }
-            if ui
+            if self.osm_page.busy {
+                if ui.button("取消获取路网").clicked() {
+                    self.osm_page.cancel.cancel();
+                    self.cancel_checkpoint_load();
+                    self.osm_page.request_id = self.osm_page.request_id.wrapping_add(1);
+                    self.osm_page.busy = false;
+                    self.osm_page.pending_manual_path = None;
+                    self.osm_page.status =
+                        "已取消接收新结果；保留当前地图，已发出的请求会结束或超时".into();
+                }
+            } else if ui
                 .add_enabled(
-                    !crate::runtime::offline()
-                        && !self.osm_page.busy
-                        && self.config.osm_path.is_empty(),
-                    egui::Button::new("重新下载路网"),
+                    !crate::runtime::offline() || !self.osm_page.path.trim().is_empty(),
+                    egui::Button::new("重试获取路网"),
                 )
                 .clicked()
             {
-                self.use_school_roads(true);
+                if self.osm_page.path.trim().is_empty() {
+                    self.refresh_map_roads(false);
+                } else {
+                    self.load_map_file_for_view(self.osm_page.path.clone());
+                }
             }
-            ui.label(if self.config.osm_path.is_empty() {
-                "当前：按学校自动获取"
-            } else {
-                "当前：手动文件"
-            });
         });
+        if self.network.is_none() && self.displayed_road_network().is_some() {
+            ui.colored_label(
+                theme::warn(),
+                "正在显示上次成功加载的地图，仅供查看；本次道路尚未就绪。",
+            );
+        }
         theme::external_link(
             ui,
-            "路网数据 © OpenStreetMap contributors",
+            "地图数据 © OpenStreetMap contributors",
             "https://www.openstreetmap.org/copyright",
         );
-        ui.label("手动导入支持 OSM XML（.osm/.xml），无需登录；PBF/JSON 请先转换为 OSM XML。路线预览另需登录刷新策略和点位。");
-        ui.label("无学校围栏时也可沿道路闭环重复里程，但无法保证路线在校内；服务端仍按实际规则判定成绩。");
-        ui.horizontal_wrapped(|ui| {
-            ui.label("手动 OSM 文件：");
-            ui.add_sized(
-                [ui.available_width().min(340.0).max(100.0), 26.0],
-                egui::TextEdit::singleline(&mut self.osm_page.path)
-                    .hint_text("拖入 .osm 文件或填写路径"),
-            );
-            #[cfg(not(target_os = "android"))]
-            if ui.button("浏览…").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("OSM XML", &["osm", "xml"])
-                    .pick_file()
-                {
-                    self.osm_page.path = p.display().to_string();
-                }
-            }
-            let can_load = !self.osm_page.path.is_empty() && !self.osm_page.busy;
-            if ui
-                .add_enabled(can_load, theme::primary_btn("加载路网"))
-                .clicked()
-            {
-                load_now = true;
-            }
-        });
-
-        ui.horizontal_wrapped(|ui| {
-            if self.osm_page.busy && ui.button("取消获取路网").clicked() {
-                self.osm_page.cancel.cancel();
-                self.osm_page.request_id = self.osm_page.request_id.wrapping_add(1);
-                self.osm_page.busy = false;
-                self.osm_page.status =
-                    "已取消接收结果；已发出的网络请求可能仍会运行到结束或超时".into();
-            }
-            if !self.osm_page.busy
-                && ui
-                    .add_enabled(
-                        !crate::runtime::offline() || !self.config.osm_path.is_empty(),
-                        egui::Button::new("重试获取路网"),
-                    )
-                    .clicked()
-            {
-                if self.config.osm_path.is_empty() {
-                    self.refresh_school_route(false);
-                } else {
-                    self.load_osm_async(self.osm_page.path.clone());
-                }
-            }
-        });
+        load_now |= self.draw_local_map_import(ui);
         self.draw_road_tools(ui);
 
         // 拖拽导入
@@ -200,21 +224,6 @@ impl App {
             if !self.osm_page.busy {
                 load_now = true;
             }
-        }
-
-        // 统计
-        if let Some(net) = &self.network {
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "节点 {} · 有向边 {} · 建筑 {}",
-                    net.graph.node_count(),
-                    net.graph.edge_count(),
-                    net.buildings.len()
-                ));
-                if let Ok(meta) = std::fs::metadata(&self.osm_page.path) {
-                    ui.label(format!("· 文件 {:.1} KB", meta.len() as f64 / 1024.0));
-                }
-            });
         }
 
         ui.add_space(4.0);
@@ -265,7 +274,7 @@ impl App {
             self.osm_page.fitted = true;
         }
 
-        if let Some(net) = &self.network {
+        if let Some(net) = &displayed_network {
             if !self.osm_page.fitted {
                 let mut bounds: Vec<(f64, f64)> = collect_bounds(
                     &net.edges_deg()
@@ -292,7 +301,7 @@ impl App {
         self.osm_page.map.interact(ui, canvas);
 
         painter.rect_filled(canvas, egui::Rounding::ZERO, theme::map_background());
-        if let Some(net) = &self.network {
+        if let Some(net) = &displayed_network {
             self.osm_page.map.draw_network(&painter, canvas, net);
         } else if self.checkpoints.data.stats.valid == 0
             && display_fences.is_empty()
@@ -350,11 +359,17 @@ impl App {
 
         if load_now {
             let path = self.osm_page.path.clone();
-            self.load_osm_async(path);
+            self.load_map_file_for_view(path);
         }
     }
 
     pub(crate) fn begin_network_load(&mut self) -> u64 {
+        self.osm_page.offline = false;
+        self.prepare_display_refresh();
+        self.osm_page.auto_attempted = true;
+        self.osm_page.auto_scope = Some(self.map_display_scope());
+        self.osm_page.pending_manual_path = None;
+        self.osm_page.map_only_request = false;
         self.osm_page.cancel.cancel();
         self.osm_page.cancel = Arc::new(crate::task_control::Control::default());
         self.run_page.preview_cancel.cancel();
@@ -378,10 +393,8 @@ impl App {
         }
         self.config.osm_path.clear();
         self.osm_page.path.clear();
-        self.config.route_mode = "road".into();
-        self.run_page.route_mode = crate::track::generate_road::RouteMode::Road;
         let _ = crate::api::model::save_config(&self.config);
-        self.refresh_school_route(force);
+        self.refresh_map_roads(force);
     }
 
     /// 后台线程加载 OSM 路网，成功后经 `net_rx` 回传。
@@ -393,14 +406,13 @@ impl App {
         let request_id = self.begin_network_load();
         self.osm_page.path = path.clone();
         self.osm_page.status = format!("加载中：{path} …");
-        self.config.osm_path = path.clone();
-        let _ = crate::api::model::save_config(&self.config);
+        self.osm_page.pending_manual_path = Some(path.clone());
         let tx = self.net_tx.clone();
         let control = self.osm_page.cancel.clone();
         std::thread::spawn(move || {
             let result = control
                 .check()
-                .and_then(|_| crate::track::generate_road::load_network_path(&path).map(Arc::new))
+                .and_then(|_| crate::api::school_roads::load_local_map(&path).map(Arc::new))
                 .and_then(|net| {
                     control.check()?;
                     Ok(net)

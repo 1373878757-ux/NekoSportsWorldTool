@@ -15,9 +15,17 @@ const ANDROID_OS_POOL: [&str; 4] = ["12", "13", "14", "15"];
 #[derive(Default)]
 pub struct DevicePage {
     saved_flash: f32,
+    save_error: Option<String>,
 }
 
 impl App {
+    fn save_device_settings(&mut self) -> Result<(), String> {
+        validate_location_edit(&self.identity, &self.device_buf)?;
+        crate::api::model::save_identity(&self.device_buf)?;
+        // Commit runtime identity only after the original persistence operation succeeds.
+        self.identity = self.device_buf.clone();
+        Ok(())
+    }
     #[cfg(target_os = "android")]
     pub(super) fn poll_device_info(&mut self) {
         let Some(reply) = crate::android::take_device_info() else { return };
@@ -151,6 +159,18 @@ impl App {
             "修改城市或定位锚点后，请点击“保存”；跑步流程只使用已保存的身份信息。",
         );
         let location_changed = location_fields_changed(&self.identity, &self.device_buf);
+        if let Some(error) = &page.save_error {
+            ui.colored_label(
+                theme::warn(),
+                format!("配置状态：保存失败，当前生效值未改变。{error}"),
+            );
+        } else if self.device_buf != self.identity {
+            ui.colored_label(theme::warn(), "配置状态：尚未保存");
+        } else if self.identity.location_configuration_issue().is_some() {
+            ui.colored_label(theme::warn(), "配置状态：已保存，但定位配置无效");
+        } else {
+            ui.colored_label(theme::ok(), "配置状态：已保存");
+        }
         if location_changed {
             if let Some(issue) = self.device_buf.location_configuration_issue() {
                 ui.colored_label(theme::warn(), format!("待保存的定位配置无效：{issue}"));
@@ -165,22 +185,22 @@ impl App {
         ui.add_space(8.0);
         mobile::row(ui, |ui| {
             if ui.add(theme::primary_btn("保存")).clicked() {
-                if let Err(issue) = validate_location_edit(&self.identity, &self.device_buf) {
-                    self.status = format!("× 定位配置未保存：{issue}");
-                } else {
-                    match crate::api::model::save_identity(&self.device_buf) {
-                        Ok(()) => {
-                            self.identity = self.device_buf.clone();
-                            self.status = "√ 设备身份已保存并生效".into();
-                            self.log.push("√  已更新（新设备 ID 从下个请求开始生效）");
-                            page.saved_flash = 2.0;
-                        }
-                        Err(e) => self.status = format!("× 保存失败：{e}"),
+                match self.save_device_settings() {
+                    Ok(()) => {
+                        page.save_error = None;
+                        self.status = "√ 设备身份已保存并生效".into();
+                        self.log.push("√  已更新（新设备 ID 从下个请求开始生效）");
+                        page.saved_flash = 2.0;
+                    }
+                    Err(e) => {
+                        page.save_error = Some(e.clone());
+                        self.status = format!("× 保存失败：{e}；当前生效值未改变");
                     }
                 }
             }
             if ui.button("撤销修改").clicked() {
                 self.device_buf = self.identity.clone();
+                page.save_error = None;
             }
             if page.saved_flash > 0.0 {
                 ui.colored_label(theme::ok(), "已保存");
@@ -273,6 +293,98 @@ fn randomize(buf: &mut HeaderIdentity, platform: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct IsolatedConfig {
+        root: std::path::PathBuf,
+        old_root: Option<std::path::PathBuf>,
+        old_offline: Option<bool>,
+    }
+    impl IsolatedConfig {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("device-config-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let old_root = crate::platform::TEST_DATA_DIR.with(|p| p.replace(Some(root.clone())));
+            let old_offline = crate::runtime::TEST_OFFLINE.with(|p| p.replace(Some(true)));
+            Self {
+                root,
+                old_root,
+                old_offline,
+            }
+        }
+    }
+    impl Drop for IsolatedConfig {
+        fn drop(&mut self) {
+            crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = self.old_root.take());
+            crate::runtime::TEST_OFFLINE.with(|p| p.set(self.old_offline));
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+    fn offline_app() -> App {
+        let ctx = egui::Context::default();
+        App::from_state(
+            &ctx,
+            HeaderIdentity {
+                city: "合成测试城市".into(),
+                anchor_lat: 39.9,
+                anchor_lon: 116.4,
+                device_id: "synthetic-device".into(),
+                app_install_time: 123,
+                mac_address: "02:00:00:00:00:01".into(),
+                ..Default::default()
+            },
+            crate::api::model::Session::default(),
+            crate::api::model::Config::default(),
+        )
+    }
+
+    #[test]
+    fn explicit_save_updates_disk_runtime_and_reload_without_changing_device_identity() {
+        let isolated = IsolatedConfig::new();
+        let mut app = offline_app();
+        let id = app.identity.device_id.clone();
+        app.device_buf.city = "哈尔滨市".into();
+        app.device_buf.anchor_lat = 45.75;
+        app.device_buf.anchor_lon = 126.63;
+        assert_ne!(app.identity, app.device_buf);
+        assert!(!isolated.root.join("identity.json").exists());
+        app.save_device_settings().unwrap();
+        let stored: HeaderIdentity =
+            serde_json::from_slice(&std::fs::read(isolated.root.join("identity.json")).unwrap())
+                .unwrap();
+        assert_eq!(stored, app.identity);
+        assert_eq!(crate::api::model::load_identity(), app.identity);
+        assert_eq!(app.identity.device_id, id);
+        assert_eq!(app.identity.anchor_lat, 45.75);
+        assert_eq!(app.identity.anchor_lon, 126.63);
+        assert!(!isolated.root.join("session.json").exists());
+        assert!(!isolated.root.join("submission_receipts").exists());
+    }
+
+    #[test]
+    fn invalid_location_and_real_io_save_failure_preserve_runtime_and_existing_data() {
+        let isolated = IsolatedConfig::new();
+        let mut app = offline_app();
+        app.save_device_settings().unwrap();
+        let original = app.identity.clone();
+        let path = isolated.root.join("identity.json");
+        let original_bytes = std::fs::read(&path).unwrap();
+        app.device_buf.city.clear();
+        assert!(app.save_device_settings().is_err());
+        assert_eq!(app.identity, original);
+        assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+        app.device_buf = original.clone();
+        app.device_buf.city = "哈尔滨市".into();
+        app.device_buf.anchor_lat = 45.75;
+        app.device_buf.anchor_lon = 126.63;
+        let blocked_root = isolated.root.join("not-a-directory");
+        std::fs::write(&blocked_root, b"existing data").unwrap();
+        crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = Some(blocked_root.clone()));
+        assert!(app.save_device_settings().is_err());
+        assert_eq!(app.identity, original);
+        assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&blocked_root).unwrap(), b"existing data");
+        assert_eq!(app.device_buf.city, "哈尔滨市");
+    }
 
     #[test]
     fn location_changes_are_detected_until_saved() {

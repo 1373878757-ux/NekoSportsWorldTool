@@ -17,6 +17,7 @@ pub mod fonts;
 pub mod jobs;
 pub mod log;
 pub mod map;
+mod map_jobs;
 pub mod mobile;
 pub mod msgs;
 pub mod osm;

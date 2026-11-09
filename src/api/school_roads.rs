@@ -12,6 +12,45 @@ const MAX_BYTES: u64 = 24 * 1024 * 1024;
 const TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const ENDPOINT: &str = "https://overpass-api.de/api/interpreter";
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+const REQUEST_INTERVAL: Duration = Duration::from_secs(30);
+static LAST_PUBLIC_REQUEST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+fn reserve_public_request(
+    last: &std::sync::Mutex<Option<Instant>>,
+    now: Instant,
+) -> Result<(), String> {
+    let mut previous = last
+        .lock()
+        .map_err(|_| "[road:rate-limit] 请求间隔状态不可用")?;
+    if let Some(started) = *previous {
+        let elapsed = now.saturating_duration_since(started);
+        if elapsed < REQUEST_INTERVAL {
+            let remaining = (REQUEST_INTERVAL - elapsed).as_secs() + 1;
+            return Err(format!("[road:rate-limit] 为避免频繁请求公共地图服务，请等待 {remaining} 秒后再加载；不会自动重试"));
+        }
+    }
+    *previous = Some(now);
+    Ok(())
+}
+
+/// GUI file import uses the same OSM parser, with a bounded, local-only read.
+#[cfg(any(feature = "gui", test))]
+pub(crate) fn load_local_map(path: &str) -> Result<RoadGraph, String> {
+    let path = Path::new(path);
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("[road:parse] 地图文件无法读取：{e}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("[road:parse] 地图文件信息读取失败：{e}"))?;
+    if !metadata.is_file() || metadata.len() > MAX_BYTES {
+        return Err("[road:parse] 请选择不超过 24 MiB 的普通地图文件".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("[road:parse] 地图文件读取失败：{e}"))?;
+    parse(&bytes)
+}
 
 #[cfg(test)]
 thread_local! {
@@ -104,9 +143,9 @@ fn parse_with_log(bytes: &[u8], log: &mut dyn FnMut(&str)) -> Result<RoadGraph, 
     let parsed = route_planner::parse_osm(bytes).map_err(|e| format!("[road:parse] {e}"))?;
     let stats = parsed.stats;
     log(&format!(
-        "[road:parse] bytes={} nodes={} ways={} highway_ways={} retained_road_ways={} unresolved_road_node_refs={}",
+        "[road:parse] bytes={} nodes={} ways={} highway_ways={} retained_road_ways={} resolved_highway_ways={} unresolved_road_node_refs={}",
         bytes.len(), stats.parsed_nodes, stats.ways, stats.highway_ways,
-        stats.retained_road_ways, stats.unresolved_road_node_refs
+        stats.retained_road_ways, stats.resolved_highway_ways, stats.unresolved_road_node_refs
     ));
     if parsed.roads.is_empty() {
         return Err(format!(
@@ -134,10 +173,13 @@ fn parse_with_log(bytes: &[u8], log: &mut dyn FnMut(&str)) -> Result<RoadGraph, 
 }
 
 fn log_graph(stage: &str, crs: &str, net: &RoadGraph, log: &mut dyn FnMut(&str)) {
+    let road_ways: std::collections::HashSet<_> =
+        net.graph.edge_weights().map(|e| e.way_id).collect();
     log(&format!(
-        "[road:{stage}] crs={crs} nodes={} edges={}",
+        "[road:{stage}] crs={crs} nodes={} edges={} road_ways={}",
         net.graph.node_count(),
-        net.graph.edge_count()
+        net.graph.edge_count(),
+        road_ways.len()
     ));
 }
 
@@ -182,6 +224,9 @@ fn download(query: &str, log: &mut dyn FnMut(&str)) -> Result<Vec<u8>, String> {
         .unwrap_or((ENDPOINT, Duration::from_secs(45)));
     #[cfg(not(test))]
     let (endpoint, timeout) = (ENDPOINT, Duration::from_secs(45));
+    if endpoint == ENDPOINT {
+        reserve_public_request(&LAST_PUBLIC_REQUEST, Instant::now())?;
+    }
     let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let started = Instant::now();
     log(&format!(
@@ -536,6 +581,53 @@ pub fn load_for_route_cancellable(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_request_interval_is_shared_and_does_not_retry_or_extend_on_rejection() {
+        let gate = std::sync::Mutex::new(None);
+        let start = Instant::now();
+        assert!(reserve_public_request(&gate, start).is_ok());
+        assert!(
+            reserve_public_request(&gate, start + Duration::from_secs(1))
+                .unwrap_err()
+                .contains("[road:rate-limit]")
+        );
+        assert!(reserve_public_request(&gate, start + Duration::from_secs(29)).is_err());
+        assert!(reserve_public_request(&gate, start + REQUEST_INTERVAL).is_ok());
+    }
+
+    #[test]
+    fn local_import_checks_size_contents_and_coordinates_without_http() {
+        let root = std::env::temp_dir().join(format!("map-file-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("地图.osm");
+        std::fs::write(&path, fixture().1).unwrap();
+        assert_eq!(
+            load_local_map(path.to_str().unwrap())
+                .unwrap()
+                .graph
+                .edge_count(),
+            2
+        );
+        for invalid in [
+            b"<html>not a map</html>".as_slice(),
+            b"\0\xffPBF",
+            b"<osm></osm>",
+        ] {
+            std::fs::write(&path, invalid).unwrap();
+            assert!(load_local_map(path.to_str().unwrap()).is_err());
+        }
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(MAX_BYTES + 1)
+            .unwrap();
+        assert!(load_local_map(path.to_str().unwrap())
+            .err()
+            .unwrap()
+            .contains("24 MiB"));
+        assert!(load_local_map(root.to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     struct LoopbackOverride {
         overpass: Option<(String, Duration)>,

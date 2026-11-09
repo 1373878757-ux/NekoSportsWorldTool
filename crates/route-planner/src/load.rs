@@ -37,6 +37,7 @@ pub struct OsmParseStats {
     pub parsed_nodes: usize,
     pub ways: usize,
     pub highway_ways: usize,
+    pub resolved_highway_ways: usize,
     pub retained_road_ways: usize,
     pub unresolved_road_node_refs: usize,
 }
@@ -104,6 +105,7 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
     let mut roads: Vec<OsmRoad> = Vec::new();
     let mut buildings: Vec<OsmBuilding> = Vec::new();
     let mut stats = OsmParseStats::default();
+    let mut highway_way_ids = Vec::new();
 
     // 所有 way 的节点序列（供 relation 建筑外环回填）。
     let mut way_nodes: HashMap<u64, Vec<u64>> = HashMap::new();
@@ -179,6 +181,7 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
                             way_nodes.insert(id, refs.clone());
                             if tags.iter().any(|(k, _)| k == "highway") {
                                 stats.highway_ways += 1;
+                                highway_way_ids.push(id);
                             }
                             let is_building =
                                 tags.iter().any(|(k, v)| k == "building" && v != "no");
@@ -255,6 +258,22 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
     }
 
     stats.parsed_nodes = nodes.len();
+    stats.resolved_highway_ways = highway_way_ids
+        .iter()
+        .filter(|id| {
+            way_nodes.get(id).is_some_and(|refs| {
+                refs.len() >= 2
+                    && refs.iter().all(|id| {
+                        nodes.get(id).is_some_and(|c| {
+                            c.lat.is_finite()
+                                && c.lon.is_finite()
+                                && c.lat.abs() <= 90.0
+                                && c.lon.abs() <= 180.0
+                        })
+                    })
+            })
+        })
+        .count();
     stats.unresolved_road_node_refs = roads
         .iter()
         .flat_map(|road| &road.node_refs)
@@ -377,11 +396,31 @@ mod diagnostic_tests {
         assert_eq!(parsed.stats.parsed_nodes, 3);
         assert_eq!(parsed.stats.ways, 5);
         assert_eq!(parsed.stats.highway_ways, 4);
+        assert_eq!(parsed.stats.resolved_highway_ways, 3);
         assert_eq!(parsed.stats.retained_road_ways, 1);
         assert_eq!(parsed.stats.unresolved_road_node_refs, 0);
         let graph = super::load_osm(xml).unwrap();
         assert_eq!(graph.graph.node_count(), 2);
         assert_eq!(graph.graph.edge_count(), 2);
         assert_eq!(graph.buildings.len(), 1);
+    }
+
+    #[test]
+    fn parsed_highways_require_complete_valid_coordinates_for_diagnostic_counts() {
+        let parsed = super::parse_osm(
+            br#"<osm>
+          <way id="1"><nd ref="1"/><nd ref="2"/><tag k="highway" v="footway"/></way>
+          <way id="2"><nd ref="1"/><nd ref="99"/><tag k="highway" v="footway"/></way>
+          <way id="3"><nd ref="1"/><nd ref="3"/><tag k="highway" v="footway"/></way>
+          <node id="1" lat="39.9" lon="116.4"/>
+          <node id="2" lat="39.901" lon="116.401"/>
+          <node id="3" lat="100" lon="116.4"/>
+        </osm>"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.stats.highway_ways, 3);
+        assert_eq!(parsed.stats.resolved_highway_ways, 1);
+        assert_eq!(parsed.stats.retained_road_ways, 3);
+        assert_eq!(parsed.stats.unresolved_road_node_refs, 1);
     }
 }

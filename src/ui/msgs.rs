@@ -208,12 +208,14 @@ impl App {
                     continue;
                 }
             }
+            let imported_map = !res.pending && self.osm_page.pending_manual_path.is_some();
             let refresh_manual_metadata = !res.pending
+                && !self.osm_page.map_only_request
                 && !res.offline
                 && res.scope.is_none()
                 && res.inputs.is_none()
                 && res.result.is_ok()
-                && !self.config.osm_path.is_empty()
+                && (!self.config.osm_path.is_empty() || imported_map)
                 && self
                     .session
                     .as_ref()
@@ -254,6 +256,20 @@ impl App {
             }
             match res.result {
                 Ok(net) => {
+                    let mut settings_warning = None;
+                    if !res.pending {
+                        if let Some(path) = self.osm_page.pending_manual_path.take() {
+                            self.config.osm_path = path;
+                            if let Err(error) = model::save_config(&self.config) {
+                                self.log.push(&format!(
+                                    "[map] 地图已读取，但来源设置保存失败：{error}"
+                                ));
+                                settings_warning = Some(format!(
+                                    "地图来源设置保存失败：{error}；重启后仍使用旧设置"
+                                ));
+                            }
+                        }
+                    }
                     let nodes = net.graph.node_count();
                     let bld = net.buildings.len();
                     self.osm_page.fitted = false;
@@ -264,14 +280,19 @@ impl App {
                     if !res.warning.is_empty() {
                         self.osm_page.status.push_str(&format!("\n{}", res.warning));
                     }
+                    if let Some(warning) = settings_warning {
+                        self.osm_page.status.push_str(&format!("\n{warning}"));
+                    }
                     self.log
                         .push(&format!("[osm] 路网加载成功：{nodes} 节点 / {bld} 建筑"));
+                    self.remember_display_map(net.clone());
                     self.network = Some(net);
                     self.run_page.preview_stale = true;
                     self.osm_page.cache_entries = crate::api::school_roads::entries();
                     self.analyze_gpx();
                 }
                 Err(e) => {
+                    self.osm_page.pending_manual_path = None;
                     self.network = None;
                     self.run_page.preview = None;
                     self.run_page.preview_stale = true;
@@ -279,10 +300,16 @@ impl App {
                     self.log.push(&format!("[osm] 路网加载失败：{e}"));
                 }
             }
+            if !res.pending {
+                self.osm_page.auto_scope = Some(self.map_display_scope());
+                self.osm_page.auto_attempted = true;
+            }
             if expired {
                 self.expire_road_session();
             } else if refresh_manual_metadata {
                 self.refresh_points();
+            } else if imported_map && !res.offline && self.session.is_some() {
+                self.refresh_checkpoint_layer();
             }
         }
         if let Some(ip) = done_ip {
