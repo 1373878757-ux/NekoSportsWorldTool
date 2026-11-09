@@ -273,7 +273,7 @@ fn cached_checkpoints_survive_real_502_timeout_and_empty_osm_with_or_without_bou
                 "timeout",
                 "200 OK",
                 "<osm></osm>",
-                Duration::from_millis(160),
+                Duration::from_millis(1_200),
             ),
             (
                 "empty",
@@ -295,7 +295,14 @@ fn cached_checkpoints_survive_real_502_timeout_and_empty_osm_with_or_without_bou
             let (url, roads) = mock_overpass(status, body, delay);
             let mut app = app(&root, &ctx, host);
             cache(&app);
-            app.route_overpass_fixture = Some((url, Duration::from_millis(70)));
+            // Leave enough time for a Windows loopback connection under CI
+            // load; the delayed response still exceeds this client timeout.
+            let request_timeout = if label == "timeout" {
+                Duration::from_secs(1)
+            } else {
+                Duration::from_secs(5)
+            };
+            app.route_overpass_fixture = Some((url, request_timeout));
             app.refresh_school_route(false);
             wait(&mut app);
             assert_eq!(school.join().unwrap(), if with_boundary { 1 } else { 2 });
