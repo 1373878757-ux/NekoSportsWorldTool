@@ -89,7 +89,7 @@ PY_DEPS
 } > "$package/BUILD-INFO.txt"
 
 (cd "$package" && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 shasum -a 256 > SHA256SUMS.txt)
-ditto -c -k --sequesterRsrc --keepParent "$package" "$archive"
+ditto -c -k --norsrc --keepParent "$package" "$archive"
 (cd "$output_dir" && shasum -a 256 "NekoSportsWorldTool-J-claude-macOS-arm64.zip" > SHA256SUMS.txt)
 
 verify="$temporary/unpacked"
