@@ -51,6 +51,7 @@ try {
     Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $package "NekoSportsWorldTool.exe")
     Copy-Item -LiteralPath (Join-Path $repo "LICENSE") -Destination $package
     Copy-Item -LiteralPath (Join-Path $repo "README-Windows.md") -Destination $package
+    Copy-Item -LiteralPath (Join-Path $repo "README-Portable.md") -Destination (Join-Path $package "使用说明-简体中文.md")
     & python (Join-Path $PSScriptRoot "collect_licenses.py") --target x86_64-pc-windows-msvc --output $package
     if ($LASTEXITCODE -ne 0) { throw "Dependency license collection failed" }
     $commit = (& git rev-parse HEAD).Trim()
@@ -80,7 +81,7 @@ try {
     $actualFiles = @(Get-ChildItem -LiteralPath $verifiedRoot -File -Recurse)
     foreach ($file in $actualFiles) {
         $relative = [IO.Path]::GetRelativePath($verifiedRoot, $file.FullName).Replace('\', '/')
-        if ($relative -notmatch '^(NekoSportsWorldTool\.exe|LICENSE|README-Windows\.md|BUILD-INFO\.txt|SHA256SUMS\.txt|THIRD-PARTY-NOTICES\.txt|licenses/.+)$') { throw "Unexpected packaged file: $relative" }
+        if ($relative -notmatch '^(NekoSportsWorldTool\.exe|LICENSE|README-Windows\.md|使用说明-简体中文\.md|BUILD-INFO\.txt|SHA256SUMS\.txt|THIRD-PARTY-NOTICES\.txt|licenses/.+)$') { throw "Unexpected packaged file: $relative" }
         if ($relative -match '(?i)(session\.json|config\.json|identity\.json|\.pdb$|\.log$|\.exe\.(new|old)$)') { throw "Runtime/private data in package: $relative" }
     }
     $smokeResult = @(& (Join-Path $PSScriptRoot "smoke_windows.ps1") -Binary (Join-Path $verifiedRoot "NekoSportsWorldTool.exe") -AllowMissingOpenGLContext)

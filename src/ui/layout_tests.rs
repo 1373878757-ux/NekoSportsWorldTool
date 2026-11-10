@@ -109,6 +109,89 @@ fn status_bar_uses_the_custom_credit_without_replacing_about_attribution() {
 }
 
 #[test]
+fn about_page_shows_approved_branding_current_version_and_honest_feature_status() {
+    let ctx = egui::Context::default();
+    let mut app = App::from_state(
+        &ctx,
+        HeaderIdentity::default(),
+        Session::default(),
+        Config::default(),
+    );
+    app.tab = 8;
+
+    frame(&mut app, &ctx, 900.0, 900.0, vec![]);
+    let output = frame(&mut app, &ctx, 900.0, 900.0, vec![]);
+    let visible_text: Vec<String> = output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if clipped.clip_rect.contains(text.pos) => {
+                Some(text.galley.text().to_owned())
+            }
+            _ => None,
+        })
+        .collect();
+
+    for expected in [
+        crate::presentation::APP_NAME,
+        crate::presentation::TAGLINE,
+        crate::presentation::SIGNATURE,
+        "Campus Map",
+        "Route Editor",
+        "Cross Platform",
+        "自动检查更新",
+    ] {
+        assert!(
+            visible_text.iter().any(|text| text == expected),
+            "About page must show {expected:?}; got {visible_text:?}"
+        );
+    }
+    assert!(visible_text
+        .iter()
+        .any(|text| { text == &format!("Version {}", crate::platform::version_name()) }));
+    assert!(visible_text.iter().any(|text| text == "仅预览"));
+    assert!(visible_text
+        .iter()
+        .any(|text| text == "可查看路线预览；尚不支持交互式编辑"));
+    assert!(!visible_text
+        .iter()
+        .any(|text| text.contains("基于上游项目的界面署名定制")));
+}
+
+#[test]
+fn compact_about_page_can_scroll_to_settings_and_license_details() {
+    let ctx = egui::Context::default();
+    let mut app = App::from_state(
+        &ctx,
+        HeaderIdentity::default(),
+        Session::default(),
+        Config {
+            update_check: "off".into(),
+            ..Default::default()
+        },
+    );
+    app.tab = 8;
+    let (w, h) = (360.0, 540.0);
+    frame(&mut app, &ctx, w, h, vec![]);
+    frame(&mut app, &ctx, w, h, vec![]);
+    for label in ["自动检查更新", "关闭", "更新日志", "开源许可", "诊断信息"] {
+        scroll_to_label(&mut app, &ctx, w, h, label);
+    }
+    let license = scroll_to_label(&mut app, &ctx, w, h, "开源许可");
+    click(&mut app, &ctx, w, h, license);
+    frame(&mut app, &ctx, w, h, vec![]);
+    let output = frame(&mut app, &ctx, w, h, vec![]);
+    assert!(label_position(
+        &output,
+        &format!("原项目作者：{}", crate::presentation::UPSTREAM_AUTHOR)
+    )
+    .is_some());
+    assert_eq!(app.config.update_check, "off");
+    assert!(!app.update.checking);
+    assert!(!app.update.downloading);
+}
+
+#[test]
 fn short_phone_data_page_can_scroll_and_operate_controls() {
     for (w, h) in [
         (320.0, 360.0),

@@ -6,10 +6,92 @@
 use super::{theme, App};
 use crate::presentation::{
     APP_NAME, BUILD_COMMIT, BUILD_TARGET, CUSTOMIZATION_NOTE, LICENSE_NAME, SIGNATURE,
-    SOURCE_REPOSITORY, TAGLINE, UPSTREAM_AUTHOR, UPSTREAM_REPOSITORY, VERSION,
+    SOURCE_REPOSITORY, TAGLINE, UPSTREAM_AUTHOR, UPSTREAM_REPOSITORY,
 };
 use crate::update::ReleaseInfo;
 use eframe::egui;
+use std::path::Path;
+
+const PROJECT_LICENSE: &str = include_str!("../../LICENSE");
+const FONT_LICENSE: &str = include_str!("../../assets/fonts/OFL-1.1.txt");
+const DEPENDENCY_LICENSE_INDEX: &str = include_str!("about_dependency_index.txt");
+
+const CHANGELOG: &[(&str, &str, &str)] = &[
+    (
+        "6a30330",
+        "2026-11-10",
+        "验证码凭证校验：拒绝不完整凭证，未知验证结果停止流程",
+    ),
+    (
+        "65bce92",
+        "2026-11-10",
+        "防止迟到的定位结果覆盖手动坐标编辑",
+    ),
+    ("71a455e", "2026-11-09", "增加可复用的当前位置设置入口"),
+    (
+        "79a8956",
+        "2026-11-09",
+        "校园地图图层独立加载，失败时保留已有显示",
+    ),
+    ("6688430", "2026-11-09", "打卡点地图图层与道路加载解耦"),
+    ("a4c5dcf", "2026-11-09", "升级启动页动画并调整状态栏署名"),
+    (
+        "17a7a68",
+        "2026-11-08",
+        "统一品牌信息、离线启动与 Windows 构建流程",
+    ),
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AboutPanel {
+    Changelog,
+    Licenses,
+    Diagnostics,
+}
+
+#[derive(Clone)]
+struct AboutDialog {
+    panel: AboutPanel,
+    copied: bool,
+}
+
+fn safe_data_dir(path: &Path, home: Option<&Path>, custom: bool) -> String {
+    if custom {
+        return "自定义数据目录（实际路径已隐藏）".into();
+    }
+    if let Some(relative) = home.and_then(|home| path.strip_prefix(home).ok()) {
+        let relative = relative.to_string_lossy();
+        if relative.is_empty() {
+            "~".into()
+        } else {
+            format!("~{}{}", std::path::MAIN_SEPARATOR, relative)
+        }
+    } else {
+        "用户数据目录（具体路径已隐藏）".into()
+    }
+}
+
+fn diagnostic_data_dir() -> String {
+    let path = crate::platform::data_dir();
+    let custom = std::env::var_os("NSWT_DATA_DIR").is_some();
+    #[cfg(target_os = "windows")]
+    let home = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
+    #[cfg(not(target_os = "windows"))]
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    safe_data_dir(&path, home.as_deref(), custom)
+}
+
+fn diagnostic_text(data_dir: &str) -> String {
+    format!(
+        "应用版本：{}\n构建提交：{}\n操作系统：{}\nCPU 架构：{}\n构建目标：{}\n数据目录：{}",
+        crate::platform::version_name(),
+        BUILD_COMMIT,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        BUILD_TARGET,
+        data_dir,
+    )
+}
 
 /// 更新流程的 UI 状态（随 App 存活，消息协议回填）。
 #[derive(Default)]
@@ -40,78 +122,82 @@ pub enum FinishAction {
 
 impl App {
     pub fn draw_about(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let mut requested_panel = None;
         egui::ScrollArea::vertical()
             .id_salt("about_scroll")
-            .show(ui, |ui| self.draw_about_content(ui));
+            .show(ui, |ui| self.draw_about_content(ui, &mut requested_panel));
+        if let Some(panel) = requested_panel {
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("about_dialog_state"),
+                    AboutDialog {
+                        panel,
+                        copied: false,
+                    },
+                );
+            });
+        }
+        self.draw_about_dialog(&ctx);
     }
 
-    fn draw_about_content(&mut self, ui: &mut egui::Ui) {
-        ui.heading(APP_NAME);
-        ui.label(egui::RichText::new(TAGLINE).color(theme::text()));
-        ui.label(
-            egui::RichText::new(SIGNATURE)
-                .small()
-                .color(theme::text_dim()),
-        );
-        ui.add_space(10.0);
-        ui.label(CUSTOMIZATION_NOTE);
-        ui.label(format!("版本：{VERSION} · 构建：{BUILD_COMMIT}"));
-        ui.label(format!(
-            "平台：{} / {} · 目标：{BUILD_TARGET}",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        ));
-        ui.label(format!("上游项目：{APP_NAME} · 作者：{UPSTREAM_AUTHOR}"));
-        theme::external_link(
-            ui,
-            "原始上游仓库",
-            format!("https://github.com/{UPSTREAM_REPOSITORY}"),
-        );
-        theme::external_link(
-            ui,
-            "本次修改所基于的源码仓库",
-            format!("https://github.com/{SOURCE_REPOSITORY}"),
-        );
-        ui.label(format!("项目许可证：{LICENSE_NAME}（仅非商业使用与分享）"));
-        theme::external_link(
-            ui,
-            "查看完整项目许可证",
-            format!("https://github.com/{SOURCE_REPOSITORY}/blob/main/LICENSE"),
-        );
-        ui.label("中文字体：Noto Sans SC · SIL Open Font License 1.1；许可证随发行包提供。");
-        if let Some(font) = &self.font_loaded {
-            ui.label(format!("当前中文字库：{font}"));
-        }
-        ui.label(format!(
-            "数据目录：{}",
-            crate::platform::data_dir().display()
-        ));
-        ui.add_space(6.0);
-        ui.label(format!("当前版本：v{}", crate::platform::version_name()));
-        let repo = if cfg!(target_os = "android") {
-            crate::update::REPO_FORK
-        } else {
-            crate::update::REPO_CUSTOM
-        };
-        theme::external_link(
-            ui,
-            egui::RichText::new(format!("https://github.com/{repo}/releases"))
-                .color(theme::text_dim()),
-            format!("https://github.com/{repo}/releases"),
-        );
-        ui.add_space(4.0);
-        ui.colored_label(
-            theme::text_dim(),
-            "手动更新：从定制版发布页下载对应平台的新文件。退出程序后替换应用，用户数据保存在上方目录。",
-        );
-        ui.colored_label(
-            theme::text_dim(),
-            "请保留 config.json、identity.json、points_cache.json 等配置文件，不要删除或修改。",
-        );
-        ui.add_space(10.0);
+    fn draw_about_content(&mut self, ui: &mut egui::Ui, requested_panel: &mut Option<AboutPanel>) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(12.0);
+            ui.heading(egui::RichText::new(APP_NAME).size(28.0).strong());
+            ui.label(
+                egui::RichText::new(TAGLINE)
+                    .size(17.0)
+                    .color(theme::text_dim()),
+            );
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(SIGNATURE)
+                    .small()
+                    .color(theme::text_dim()),
+            );
+            ui.add_space(7.0);
+            ui.label(
+                egui::RichText::new(format!("Version {}", crate::platform::version_name()))
+                    .small()
+                    .color(theme::accent()),
+            );
+            ui.add_space(14.0);
+        });
 
-        // ── 检查 / 版本信息 ────────────────────────────────────
-        ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("功能概览").strong());
+        let cards = [
+            ("Campus Map", "已支持", "校园地图与平台打卡点可视化"),
+            (
+                "Route Editor",
+                "仅预览",
+                "可查看路线预览；尚不支持交互式编辑",
+            ),
+            ("Cross Platform", "已支持", "macOS / Windows"),
+        ];
+        if ui.available_width() >= 690.0 {
+            ui.columns(3, |columns| {
+                for (column, (title, state, description)) in columns.iter_mut().zip(cards) {
+                    draw_feature_card(column, title, state, description);
+                }
+            });
+        } else {
+            for (title, state, description) in cards {
+                draw_feature_card(ui, title, state, description);
+            }
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("软件更新").strong());
+            ui.label(
+                egui::RichText::new(format!("当前版本 {}", crate::platform::version_name()))
+                    .color(theme::text_dim()),
+            );
+        });
+        ui.add_space(2.0);
+        ui.horizontal_wrapped(|ui| {
             let busy = self.update.checking || self.update.downloading;
             if ui
                 .add_enabled(
@@ -122,67 +208,63 @@ impl App {
             {
                 self.check_update(true);
             }
-            if self.update.checking {
-                ui.colored_label(theme::text_dim(), "检查中…");
+            let status = if self.update.checking {
+                ("检查中…", theme::text_dim())
+            } else if self.update.check_error.is_some() {
+                ("检查失败", theme::err())
             } else if self.update.up_to_date {
-                ui.colored_label(
-                    theme::ok(),
+                (
                     if cfg!(target_os = "android") {
-                        "√ 已是最新版本"
+                        "已是最新版本"
                     } else {
                         "暂无可用定制版更新"
                     },
-                );
-            }
+                    theme::ok(),
+                )
+            } else if self.update.latest.is_some() {
+                ("发现可用更新", theme::warn())
+            } else if crate::runtime::offline() {
+                ("离线模式，未检查", theme::text_dim())
+            } else {
+                ("尚未检查", theme::text_dim())
+            };
+            ui.colored_label(status.1, status.0);
         });
-        if let Some(e) = &self.update.check_error {
-            ui.colored_label(theme::err(), format!("× {e}"));
-        }
-        if let Some(rel) = &self.update.latest {
-            ui.add_space(6.0);
+        if let Some(rel) = self.update.latest.clone() {
+            ui.add_space(3.0);
             ui.label(format!(
-                "最新版本：{}（{:.1} MB，{}）",
+                "最新版本：{}（{:.1} MB）",
                 rel.tag,
                 rel.asset_size as f64 / 1024.0 / 1024.0,
-                rel.repo
             ));
             if !rel.title.is_empty() {
                 ui.colored_label(theme::text_dim(), &rel.title);
             }
-            let notes: Vec<&str> = rel.notes.lines().take(12).collect();
-            if !notes.is_empty() {
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("about_notes")
-                    .max_height(160.0)
-                    .show(ui, |ui| {
-                        for line in notes {
-                            ui.label(egui::RichText::new(line).small().color(theme::text_dim()));
-                        }
-                    });
+            let notes: Vec<&str> = rel.notes.lines().take(8).collect();
+            for line in notes {
+                ui.label(egui::RichText::new(line).small().color(theme::text_dim()));
             }
-            ui.add_space(6.0);
             if self.update.downloading {
                 self.draw_download_progress(ui);
             } else if self.update.finish.is_none() {
-                if ui
-                    .add_enabled(!crate::runtime::offline(), egui::Button::new("立即更新"))
-                    .clicked()
-                {
-                    if self.any_busy() {
-                        self.status = "有任务进行中，请稍后再试".into();
-                    } else {
-                        let rel = rel.clone();
-                        self.update.confirm = Some(rel);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(!crate::runtime::offline(), egui::Button::new("立即更新"))
+                        .clicked()
+                    {
+                        if self.any_busy() {
+                            self.status = "有任务进行中，请稍后再试".into();
+                        } else {
+                            self.update.confirm = Some(rel.clone());
+                        }
                     }
-                }
+                });
             }
         }
         if self.update.downloading && self.update.latest.is_none() {
             self.draw_download_progress(ui);
         }
         if let Some(fin) = self.update.finish.clone() {
-            ui.add_space(6.0);
             match fin {
                 FinishAction::Restart { tag } => {
                     ui.colored_label(theme::ok(), format!("√ 已更新到 {tag}，重启后生效"));
@@ -192,13 +274,17 @@ impl App {
                 }
             }
         }
-
-        ui.add_space(14.0);
-        ui.separator();
-
-        // ── 启动检查模式 ───────────────────────────────────────
-        ui.label("启动时检查更新：");
-        ui.horizontal(|ui| {
+        let repo = if cfg!(target_os = "android") {
+            crate::update::REPO_FORK
+        } else {
+            crate::update::REPO_CUSTOM
+        };
+        if let Some(e) = &self.update.check_error {
+            ui.colored_label(theme::err(), format!("× {e}"));
+        }
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("自动检查更新").strong());
+        ui.horizontal_wrapped(|ui| {
             for (m, label) in [
                 ("silent", "静默检查（发现新版才提示）"),
                 ("ask", "每次询问"),
@@ -213,7 +299,89 @@ impl App {
                 }
             }
         });
-        ui.colored_label(theme::text_dim(), "协议变更时旧版本可能异常，建议保持开启");
+        ui.horizontal_wrapped(|ui| {
+            theme::external_link(
+                ui,
+                "查看更新源",
+                format!("https://github.com/{repo}/releases"),
+            );
+            ui.colored_label(
+                theme::text_dim(),
+                "检查更新只会检查版本；下载仍需用户确认。",
+            );
+        });
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            for (label, panel) in [
+                ("更新日志", AboutPanel::Changelog),
+                ("开源许可", AboutPanel::Licenses),
+                ("诊断信息", AboutPanel::Diagnostics),
+            ] {
+                if ui.button(label).clicked() {
+                    *requested_panel = Some(panel);
+                }
+            }
+        });
+    }
+
+    fn draw_about_dialog(&self, ctx: &egui::Context) {
+        let id = egui::Id::new("about_dialog_state");
+        let Some(mut dialog) = ctx.data(|data| data.get_temp::<AboutDialog>(id)) else {
+            return;
+        };
+        let title = match dialog.panel {
+            AboutPanel::Changelog => "更新日志",
+            AboutPanel::Licenses => "开源许可",
+            AboutPanel::Diagnostics => "诊断信息",
+        };
+        let mut open = true;
+        let available =
+            (ctx.screen_rect().size() - egui::vec2(24.0, 24.0)).max(egui::vec2(120.0, 120.0));
+        egui::Window::new(title)
+            .id(egui::Id::new("about_dialog_window"))
+            .open(&mut open)
+            .resizable(true)
+            .collapsible(false)
+            .default_size([available.x.min(600.0), available.y.min(500.0)])
+            .min_size([available.x.min(300.0), available.y.min(260.0)])
+            .max_size(available)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.set_max_width(available.x.min(720.0));
+                egui::ScrollArea::vertical()
+                    .id_salt("about_dialog_scroll")
+                    .show(ui, |ui| match dialog.panel {
+                        AboutPanel::Changelog => draw_changelog(ui),
+                        AboutPanel::Licenses => draw_licenses(ui),
+                        AboutPanel::Diagnostics => {
+                            let data_dir = diagnostic_data_dir();
+                            ui.label("以下信息可用于排查兼容性问题，不包含账户或精确位置。");
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new(diagnostic_text(&data_dir)).monospace());
+                            if let Some(font) = &self.font_loaded {
+                                ui.label(format!("界面字体：{font}"));
+                            }
+                            ui.add_space(10.0);
+                            if ui.add(theme::primary_btn("复制诊断信息")).clicked() {
+                                ctx.copy_text(diagnostic_text(&data_dir));
+                                dialog.copied = true;
+                            }
+                            if dialog.copied {
+                                ui.colored_label(theme::ok(), "已复制到剪贴板");
+                            }
+                        }
+                    });
+            });
+        ctx.data_mut(|data| {
+            if open {
+                data.insert_temp(id, dialog);
+            } else {
+                data.remove::<AboutDialog>(id);
+            }
+        });
     }
 
     fn draw_download_progress(&self, ui: &mut egui::Ui) {
@@ -383,6 +551,90 @@ impl App {
     }
 }
 
+fn draw_feature_card(ui: &mut egui::Ui, title: &str, state: &str, description: &str) {
+    egui::Frame::group(ui.style())
+        .fill(theme::background())
+        .stroke(egui::Stroke::new(1.0, theme::border()))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .show(ui, |ui| {
+            ui.set_min_height(82.0);
+            ui.label(egui::RichText::new(title).strong());
+            ui.colored_label(
+                if state == "已支持" {
+                    theme::ok()
+                } else {
+                    theme::warn()
+                },
+                state,
+            );
+            ui.label(
+                egui::RichText::new(description)
+                    .small()
+                    .color(theme::text_dim()),
+            );
+        });
+}
+
+fn draw_changelog(ui: &mut egui::Ui) {
+    ui.label(format!("当前应用版本：{}", crate::platform::version_name()));
+    ui.label("以下为当前开发分支的部分 Git 提交摘要，不代表独立的已发布版本。");
+    ui.add_space(10.0);
+    for (commit, date, summary) in CHANGELOG {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(*date).small().color(theme::text_dim()));
+            ui.label(egui::RichText::new(*summary).strong());
+            ui.label(
+                egui::RichText::new(*commit)
+                    .monospace()
+                    .small()
+                    .color(theme::text_dim()),
+            );
+        });
+        ui.separator();
+    }
+}
+
+fn draw_licenses(ui: &mut egui::Ui) {
+    ui.label(egui::RichText::new(APP_NAME).strong());
+    ui.label(format!("原项目作者：{UPSTREAM_AUTHOR}"));
+    ui.label(format!("上游来源：{UPSTREAM_REPOSITORY}"));
+    ui.label(format!("源码来源：{SOURCE_REPOSITORY}"));
+    ui.label(CUSTOMIZATION_NOTE);
+    ui.label(format!("项目许可证：{LICENSE_NAME}"));
+    ui.add_space(8.0);
+    egui::CollapsingHeader::new("项目许可证全文 · CC BY-NC 4.0")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(PROJECT_LICENSE).small());
+        });
+    ui.separator();
+    ui.label(egui::RichText::new("Noto Sans SC").strong());
+    ui.label("字体许可证：SIL Open Font License 1.1");
+    egui::CollapsingHeader::new("字体许可证全文 · SIL OFL 1.1")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(FONT_LICENSE).small());
+        });
+    ui.separator();
+    ui.label(egui::RichText::new("第三方依赖").strong());
+    ui.label("以下清单来自锁定的 Cargo 依赖元数据；发行包另含 THIRD-PARTY-NOTICES.txt 与 licenses/ 中的原文。");
+    egui::CollapsingHeader::new("依赖版本与 SPDX 许可标识")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(DEPENDENCY_LICENSE_INDEX)
+                    .monospace()
+                    .small(),
+            );
+        });
+    ui.add_space(4.0);
+    theme::external_link(
+        ui,
+        "查看上游项目许可证",
+        format!("https://github.com/{UPSTREAM_REPOSITORY}/blob/main/LICENSE"),
+    );
+}
+
 impl UpdateUi {
     fn fraction(&self) -> f32 {
         match self.total {
@@ -397,5 +649,33 @@ impl UpdateUi {
             Some(t) if t > 0 => format!("{}/{}", mb(self.done), mb(t)),
             _ => format!("已下载 {}", mb(self.done)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_data_directory_hides_user_and_custom_path_segments() {
+        let home = Path::new("/Users/alice");
+        let relative = Path::new("Library")
+            .join("Application Support")
+            .join("ExampleApp");
+        let data = home.join(&relative);
+        let display = safe_data_dir(&data, Some(home), false);
+        assert_eq!(
+            display,
+            format!("~{}{}", std::path::MAIN_SEPARATOR, relative.display())
+        );
+        assert!(!display.contains("alice"));
+        assert_eq!(
+            safe_data_dir(&data, Some(home), true),
+            "自定义数据目录（实际路径已隐藏）"
+        );
+        assert_eq!(
+            safe_data_dir(Path::new("/private/custom/location"), Some(home), false),
+            "用户数据目录（具体路径已隐藏）"
+        );
     }
 }
