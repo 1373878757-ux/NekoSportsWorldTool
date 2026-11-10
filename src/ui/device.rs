@@ -19,6 +19,8 @@ pub struct DevicePage {
     save_error: Option<String>,
     location_request: Option<BrowserLocationRequest>,
     location_snapshot: Option<(f64, f64)>,
+    location_input_ids: [Option<egui::Id>; 2],
+    location_input_interacted: bool,
     location_notice: Option<(String, bool)>,
     location_fix: Option<LocationFix>,
 }
@@ -27,6 +29,30 @@ impl DevicePage {
     fn cancel_location(&mut self) {
         self.location_request = None;
         self.location_snapshot = None;
+        self.location_input_interacted = false;
+    }
+
+    fn observe_coordinate_input(&mut self, index: usize, response: &egui::Response) {
+        self.location_input_ids[index] = Some(response.id);
+        if self.location_snapshot.is_some()
+            && (response.clicked()
+                || response.dragged()
+                || response.has_focus()
+                || response.lost_focus())
+        {
+            self.location_input_interacted = true;
+        }
+    }
+
+    fn coordinate_input_conflicts(&self, ctx: &egui::Context) -> bool {
+        // DragValue can still commit its buffered text on the frame it loses focus.
+        self.location_input_interacted
+            || ctx.memory(|memory| {
+                self.location_input_ids
+                    .iter()
+                    .flatten()
+                    .any(|id| memory.has_focus(*id) || memory.had_focus_last_frame(*id))
+            })
     }
 }
 
@@ -56,10 +82,13 @@ impl App {
         let Some((latitude, longitude)) = self.device_page.location_snapshot.take() else {
             return;
         };
+        let input_conflicts = self.device_page.coordinate_input_conflicts(&self.ctx);
+        self.device_page.location_input_interacted = false;
         let result = result.and_then(|fix| Ok((fix, fix.platform_coordinate()?)));
         match result {
             Ok((fix, coordinate)) => {
-                if latitude.to_bits() != self.device_buf.anchor_lat.to_bits()
+                if input_conflicts
+                    || latitude.to_bits() != self.device_buf.anchor_lat.to_bits()
                     || longitude.to_bits() != self.device_buf.anchor_lon.to_bits()
                 {
                     self.device_page.location_notice = Some((
@@ -98,6 +127,7 @@ impl App {
                     Ok(request) => {
                         page.location_snapshot =
                             Some((self.device_buf.anchor_lat, self.device_buf.anchor_lon));
+                        page.location_input_interacted = false;
                         page.location_notice = Some((
                             "请在默认浏览器打开的本机定位页中点击授权，获取结果后返回软件".into(),
                             false,
@@ -237,9 +267,25 @@ impl App {
                 ui.label("城市：");
                 mobile::text_edit(ui, "device_city", &mut self.device_buf.city, crate::platform::InputKind::Text, ui.available_width());
                 ui.label("定位锚点纬度：");
-                mobile::drag_f64(ui, "device_lat", &mut self.device_buf.anchor_lat, -90.0..=90.0, 0.00001, 6);
+                let latitude = mobile::drag_f64(
+                    ui,
+                    "device_lat",
+                    &mut self.device_buf.anchor_lat,
+                    -90.0..=90.0,
+                    0.00001,
+                    6,
+                );
+                page.observe_coordinate_input(0, &latitude);
                 ui.label("定位锚点经度：");
-                mobile::drag_f64(ui, "device_lon", &mut self.device_buf.anchor_lon, -180.0..=180.0, 0.00001, 6);
+                let longitude = mobile::drag_f64(
+                    ui,
+                    "device_lon",
+                    &mut self.device_buf.anchor_lon,
+                    -180.0..=180.0,
+                    0.00001,
+                    6,
+                );
+                page.observe_coordinate_input(1, &longitude);
             });
         } else {
             egui::Grid::new("device_grid")
@@ -267,10 +313,26 @@ impl App {
                     mobile::text_edit(ui, "device_city", &mut self.device_buf.city, crate::platform::InputKind::Text, 120.0);
                     ui.end_row();
                     ui.label("定位锚点纬度：");
-                    mobile::drag_f64(ui, "device_lat", &mut self.device_buf.anchor_lat, -90.0..=90.0, 0.00001, 6);
+                    let latitude = mobile::drag_f64(
+                        ui,
+                        "device_lat",
+                        &mut self.device_buf.anchor_lat,
+                        -90.0..=90.0,
+                        0.00001,
+                        6,
+                    );
+                    page.observe_coordinate_input(0, &latitude);
                     ui.end_row();
                     ui.label("定位锚点经度：");
-                    mobile::drag_f64(ui, "device_lon", &mut self.device_buf.anchor_lon, -180.0..=180.0, 0.00001, 6);
+                    let longitude = mobile::drag_f64(
+                        ui,
+                        "device_lon",
+                        &mut self.device_buf.anchor_lon,
+                        -180.0..=180.0,
+                        0.00001,
+                        6,
+                    );
+                    page.observe_coordinate_input(1, &longitude);
                     ui.end_row();
                 });
         }
@@ -615,6 +677,179 @@ mod tests {
         app.finish_device_location(Ok(acquired_fix(45.75, 126.63)));
         assert_eq!(app.device_buf, edited);
         assert_eq!(app.identity, original);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn device_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+        result: Option<(LocationFix, Option<egui::Id>)>,
+    ) {
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 1400.0),
+                )),
+                events,
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                if let Some((fix, surrender)) = result {
+                    if let Some(id) = surrender {
+                        ctx.memory_mut(|memory| memory.surrender_focus(id));
+                        assert!(ctx.memory(|memory| memory.had_focus_last_frame(id)));
+                    }
+                    app.finish_device_location(Ok(fix));
+                }
+                egui::CentralPanel::default().show(ctx, |ui| app.draw_device(ui));
+            },
+        );
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn start_coordinate_edit(
+        app: &mut App,
+        ctx: &egui::Context,
+        width: f32,
+        index: usize,
+    ) -> egui::Id {
+        device_frame(app, ctx, width, vec![], None);
+        device_frame(app, ctx, width, vec![], None);
+        let id = app.device_page.location_input_ids[index].unwrap();
+        let position = ctx.read_response(id).unwrap().rect.center();
+        app.device_page.location_snapshot =
+            Some((app.device_buf.anchor_lat, app.device_buf.anchor_lon));
+        for pressed in [true, false] {
+            device_frame(
+                app,
+                ctx,
+                width,
+                vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                None,
+            );
+        }
+        assert!(ctx.memory(|memory| memory.has_focus(id)));
+        device_frame(app, ctx, width, vec![egui::Event::Text("40e".into())], None);
+        assert_eq!(
+            ctx.data(|data| data.get_temp::<String>(id)).as_deref(),
+            Some("40e")
+        );
+        id
+    }
+
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn late_location_cannot_mix_coordinates_with_an_active_egui_edit() {
+        let _isolated = IsolatedConfig::new();
+        for width in [440.0, 1000.0] {
+            for index in 0..2 {
+                let mut app = offline_app();
+                let ctx = app.ctx.clone();
+                let original = (app.device_buf.anchor_lat, app.device_buf.anchor_lon);
+                let id = start_coordinate_edit(&mut app, &ctx, width, index);
+                assert_eq!(
+                    (app.device_buf.anchor_lat, app.device_buf.anchor_lon),
+                    original
+                );
+
+                device_frame(
+                    &mut app,
+                    &ctx,
+                    width,
+                    vec![],
+                    Some((acquired_fix(45.75, 126.63), None)),
+                );
+                assert_eq!(
+                    (app.device_buf.anchor_lat, app.device_buf.anchor_lon),
+                    original
+                );
+                assert_eq!(
+                    ctx.data(|data| data.get_temp::<String>(id)).as_deref(),
+                    Some("40e")
+                );
+                assert!(app
+                    .device_page
+                    .location_notice
+                    .as_ref()
+                    .unwrap()
+                    .0
+                    .contains("手动修改"));
+
+                device_frame(
+                    &mut app,
+                    &ctx,
+                    width,
+                    vec![egui::Event::Text("-1".into())],
+                    None,
+                );
+                device_frame(
+                    &mut app,
+                    &ctx,
+                    width,
+                    vec![egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    None,
+                );
+                device_frame(&mut app, &ctx, width, vec![], None);
+                let expected = if index == 0 {
+                    (4.0, original.1)
+                } else {
+                    (original.0, 4.0)
+                };
+                assert_eq!(
+                    (app.device_buf.anchor_lat, app.device_buf.anchor_lon),
+                    expected
+                );
+                assert_eq!((app.identity.anchor_lat, app.identity.anchor_lon), original);
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn late_location_respects_coordinate_focus_lost_in_the_same_frame() {
+        let _isolated = IsolatedConfig::new();
+        let mut app = offline_app();
+        let ctx = app.ctx.clone();
+        let original = (app.device_buf.anchor_lat, app.device_buf.anchor_lon);
+        let id = start_coordinate_edit(&mut app, &ctx, 1000.0, 0);
+        // Exercise the focus check independently of the interaction history.
+        app.device_page.location_input_interacted = false;
+        device_frame(
+            &mut app,
+            &ctx,
+            1000.0,
+            vec![],
+            Some((acquired_fix(45.75, 126.63), Some(id))),
+        );
+        assert_eq!(
+            (app.device_buf.anchor_lat, app.device_buf.anchor_lon),
+            original
+        );
+        assert!(app
+            .device_page
+            .location_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("手动修改"));
     }
 
     #[test]
